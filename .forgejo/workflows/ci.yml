@@ -1,0 +1,21 @@
+# Forgejo CI for the jeremy/rakazo dev fork (Homelab, 2026-11-24).
+# Having .forgejo/workflows/ makes Forgejo ignore the upstream .github/workflows,
+# which need GitHub-only secrets, GHCR and paid runners. Lint is cheap (~30 s);
+# the full upstream test suites are not run here (see Homelab/runbooks/rakazo-dev.md).
+name: ci
+on:
+  push:
+  pull_request:
+concurrency:
+  group: ci-${{ forge.ref }}
+  cancel-in-progress: true
+jobs:
+  lint:
+    runs-on: docker
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Biome (same version and config as upstream)
+        run: |
+          v=$(node -p "require('./package.json').devDependencies['@biomejs/biome']")
+          npx --yes "@biomejs/biome@$v" ci --reporter=summary .
