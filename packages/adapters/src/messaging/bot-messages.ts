@@ -4,12 +4,10 @@ import {
   BOT_MESSAGE_TOO_LONG,
   botMessageContext,
   botMessageHopExhausted,
-  botMessageWaitingText,
   buildBotMessageWakePrompt,
   clampBotMessage,
   nextBotMessageHop,
   resolveBotAddress,
-  retry,
   sanitizeMessagingLabel,
 } from "@rakazo/core";
 import type { PrismaClient } from "@rakazo/db";
@@ -22,7 +20,6 @@ import {
   THREAD_LOCK_TRANSACTION_OPTIONS,
   withTransactionRetry,
 } from "@rakazo/db";
-import { bestEffort, getLogger } from "@rakazo/logging";
 import { runLeaseFor } from "../runs/assembly/run-messages.js";
 import type { ExecutorDeps } from "../runs/executor/executor-deps.js";
 import { wakeRun } from "../runs/wakeups/wake-run.js";
@@ -115,8 +112,8 @@ export async function messageBot(
     /** Attachments filed under the recipient's chat, shown there and copied to its computer. */
     files?: Array<Extract<MessageBlock, { kind: "image" | "file" }>>;
   },
-  /** `ended` or `waiting` sends a return to the requester from a run that is no longer running. */
-  options?: { returnFrom?: "ended" | "waiting"; forceUnread?: boolean },
+  /** `ended` sends a return to the requester from a terminal run. */
+  options?: { returnFrom?: "ended"; forceUnread?: boolean },
 ) {
   const message = String(input.message ?? "").trim();
   if (!message) return { ok: false as const, error: "message is required" };
@@ -224,11 +221,7 @@ export async function messageBot(
             botId: run.botId,
             userId: run.userId,
             status:
-              returnFrom === "ended"
-                ? { in: ["completed", "failed", "cancelled"] }
-                : returnFrom === "waiting"
-                  ? "waiting_input"
-                  : "running",
+              returnFrom === "ended" ? { in: ["completed", "failed", "cancelled"] } : "running",
           },
           select: { id: true },
         });
@@ -434,50 +427,15 @@ export async function returnBotMessageOutcome(
   return outcome.ok;
 }
 
-/**
- * Tell the requester a delegated run is waiting on the user, so it can say so instead of
- * hearing nothing until the user answers. `waitId` is the paused attempt: one notice per wait.
- */
-export async function reportBotMessageWait(
-  deps: Pick<ExecutorDeps, "prisma" | "events" | "jobs" | "runLease">,
-  run: DelegatedRun & { trigger: string },
-  sender: { id: string; name: string },
-  ask: string,
-  waitId: string,
-) {
-  if (run.trigger !== "bot_message") return;
-  // The delivery key makes a repeat a replay, so any failure is worth another try.
-  await bestEffort(
-    "bot message wait notice",
-    retry(() => sendWaitNotice(deps, run, sender, ask, waitId), {
-      attempts: 3,
-      retryable: () => true,
-    }),
-  );
-}
-
-async function sendWaitNotice(
-  deps: Pick<ExecutorDeps, "prisma" | "events" | "jobs" | "runLease">,
-  run: DelegatedRun,
-  sender: { id: string; name: string },
-  ask: string,
-  waitId: string,
-) {
-  const requesterId = await requesterBotId(deps.prisma, run);
-  if (!requesterId) return;
-  const sent = await messageBot(
-    deps,
-    run,
-    sender,
-    {
-      bot_id: requesterId,
-      message: clampBotMessage(botMessageWaitingText(ask)),
-      intent: "status",
-      deliveryKey: `waiting:${waitId}`,
-    },
-    { returnFrom: "waiting", forceUnread: true },
-  );
-  if (!sent.ok) getLogger().warn("bot message wait notice not sent", { error: sent.error });
+// Keep the hook for upstream callers. This fork disables automatic wait notices.
+export function reportBotMessageWait(
+  _deps: Pick<ExecutorDeps, "prisma" | "events" | "jobs" | "runLease">,
+  _run: DelegatedRun & { trigger: string },
+  _sender: { id: string; name: string },
+  _ask: string,
+  _waitId: string,
+): Promise<void> {
+  return Promise.resolve();
 }
 
 async function markBotOutcomeReturned(prisma: PrismaClient, runId: string) {

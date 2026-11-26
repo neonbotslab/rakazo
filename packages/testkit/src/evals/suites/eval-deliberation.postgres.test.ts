@@ -34,18 +34,8 @@ function peerTurn(turn: Turn): ModelEmulatorStep[] {
             arguments: { recordId: "customer-1", status: "active", priority: "high" },
           },
   };
-  // A write from a run another bot started waits for the owner, and the peer hears it is waiting.
-  if (!("reply" in turn)) {
-    return [
-      subject,
-      {
-        expect(request) {
-          expect(JSON.stringify(request.messages)).toContain("Paused until the user responds");
-        },
-        response: { type: "text", text: "Assistant is waiting on approval." },
-      },
-    ];
-  }
+  // A write waits for the owner without waking the peer.
+  if (!("reply" in turn)) return [subject];
   return [
     subject,
     {

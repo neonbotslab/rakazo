@@ -73,9 +73,14 @@ export async function startModelEmulator(options: {
       return;
     }
     void (async () => {
+      assert.equal(request.headers.authorization, `Bearer ${options.apiKey ?? "local"}`);
+      if (request.method === "GET" && request.url === "/v1/models") {
+        response.writeHead(200, { "content-type": "application/json" });
+        response.end(JSON.stringify({ data: [{ id: modelId }] }));
+        return;
+      }
       assert.equal(request.method, "POST", "Expected a model POST request");
       assert.equal(request.url, "/v1/chat/completions", "Unexpected model endpoint");
-      assert.equal(request.headers.authorization, `Bearer ${options.apiKey ?? "local"}`);
       const chunks: Buffer[] = [];
       let bytes = 0;
       for await (const chunk of request) {

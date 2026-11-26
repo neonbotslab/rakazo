@@ -998,45 +998,12 @@ describe("waiting on the user", () => {
     returnToMessageId: "message-request",
   };
 
-  it("tells the requesting bot right away, even at the hop limit", async () => {
+  it("creates no message or queued wake for the requesting bot", async () => {
     const harness = deps({ hopBlocks: [request] });
 
     await reportBotMessageWait(harness.deps, delegated, sender, "Which city?", "attempt-1");
 
-    expect(harness.tx.run.findFirst).toHaveBeenCalledWith(
-      expect.objectContaining({
-        where: expect.objectContaining({ status: "waiting_input" }),
-      }),
-    );
-    expect(harness.tx.message.create).toHaveBeenLastCalledWith(
-      expect.objectContaining({
-        data: expect.objectContaining({
-          threadId: "thread-target",
-          clientNonce: "bot-message:waiting:attempt-1",
-          blocks: expect.arrayContaining([
-            expect.objectContaining({
-              intent: "status",
-              text: expect.stringContaining("Which city?"),
-            }),
-          ]),
-        }),
-      }),
-    );
-    expect(harness.enqueue).toHaveBeenCalledOnce();
-  });
-
-  it("says nothing when no bot is waiting on the run", async () => {
-    const harness = deps({ hopBlocks: [{ ...request, intent: "fyi" }] });
-
-    await reportBotMessageWait(
-      harness.deps,
-      { ...delegated, trigger: "user" },
-      sender,
-      "Which city?",
-      "attempt-1",
-    );
-    await reportBotMessageWait(harness.deps, delegated, sender, "Which city?", "attempt-2");
-
-    expect(harness.tx.run.create).not.toHaveBeenCalled();
+    expect(harness.tx.message.create).not.toHaveBeenCalled();
+    expect(harness.enqueue).not.toHaveBeenCalled();
   });
 });
