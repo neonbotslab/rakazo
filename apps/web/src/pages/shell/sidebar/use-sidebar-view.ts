@@ -1,7 +1,8 @@
 import { useLingui } from "@lingui/react/macro";
 import type { Bot, BotSection, Group, Me, Space } from "@rakazo/contracts";
 import { chatSnoozed } from "@rakazo/core";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import { desktopBridge } from "../../../lib/platform/desktop";
 import { useDesktopBadge } from "../../../lib/platform/use-desktop-badge";
 import {
   readBotsSidebarCollapsed,
@@ -10,10 +11,6 @@ import {
 import type { SnoozedChat } from "./snoozed-chats";
 import { countUnreadChats, sidebarGroupsForSpaces } from "./space-sidebar";
 
-/**
- * What the sidebar shows: whether it is collapsed, every space's chats grouped for the roster, the
- * snoozed ones, and the unread count on the Dock badge.
- */
 export function useSidebarView({
   userId,
   isMobile,
@@ -82,12 +79,24 @@ export function useSidebarView({
       ),
     [sidebarSpaces, searchQuery, mini, t, now],
   );
-  // The Dock badge ignores the roster search box: a filter must not hide unread chats.
+  // The unread count includes chats hidden by roster search.
   const unreadChatCount = useMemo(
-    () => countUnreadChats(sidebarGroupsForSpaces(sidebarSpaces, "", undefined, now)),
-    [sidebarSpaces, now],
+    () =>
+      userId ? countUnreadChats(sidebarGroupsForSpaces(sidebarSpaces, "", undefined, now)) : 0,
+    [sidebarSpaces, now, userId],
   );
-  useDesktopBadge(userId ? unreadChatCount : 0);
+  useDesktopBadge(unreadChatCount);
+  useEffect(() => {
+    if (unreadChatCount <= 0 || desktopBridge()) return;
+
+    const baseTitle = document.title;
+    const unreadTitle = `(${unreadChatCount}) ${baseTitle}`;
+    document.title = unreadTitle;
+    return () => {
+      if (document.title === unreadTitle) document.title = baseTitle;
+    };
+  }, [unreadChatCount]);
+
   const snoozed: SnoozedChat[] = sidebarSpaces.flatMap((space) => [
     ...space.bots
       .filter((chat) => chatSnoozed(chat, now))
