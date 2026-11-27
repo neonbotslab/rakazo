@@ -8,7 +8,7 @@ Open a conversation with a bot. Enable **Show tool activity** under **Settings â
 
 ## Driving it with Playwright
 
-Run `verify spec e2e/chat/live-reasoning.spec.ts`. Check that the finished timeline starts closed and that thinking and calls share a rail. Opening a repeat group loads its first call's details for the shared subject. The other calls load when opened. The spec captures the seven timeline states in light and dark at desktop and phone widths.
+Run `verify spec e2e/chat/live-reasoning.spec.ts`. Check that the finished timeline starts closed and that thinking and calls share a rail. Opening a repeat group loads its first call's details for the shared subject. The other calls load when opened. In a chat with two bot speakers, check that each name aligns with the disclosure and appears once per turn. The spec captures these states in light and dark at desktop and phone widths.
 
 Run `verify spec e2e/chat/tool-activity.spec.ts` for the preference and for saved steps that predate per-call traces.
 

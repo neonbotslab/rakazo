@@ -41,6 +41,7 @@ const cases = [
   "error-open",
   "running-open",
   "long",
+  "two-bot",
 ] as const;
 
 async function interceptDetails(page: Page, requests: string[]) {
@@ -92,11 +93,28 @@ test("matches the timeline states across widths and themes", async ({ page }, te
       for (const [index, state] of cases.entries()) {
         await page.setViewportSize({ width, height });
         await page.goto(`${fixture}?state=${state}&theme=${theme}`);
-        const trace = page.getByTestId("thinking-trace");
+        const traces = page.getByTestId("thinking-trace");
+        const trace = traces.first();
         const summary = trace.getByRole("button").first();
-        await expect(trace).toHaveCount(1);
+        await expect(traces).toHaveCount(state === "two-bot" ? 3 : 1);
         await expect(summary).toHaveAttribute("aria-expanded", "false");
         if (state !== "finished-closed") await summary.click();
+        const names = page.getByTestId("bot-sender-name");
+        if (state === "two-bot") {
+          await expect(names).toHaveText(["Chief", "Atlas"]);
+          for (const id of ["chief-reply", "atlas-reply"]) {
+            const row = page.locator(`[data-message-id="${id}"]`);
+            const name = row.getByTestId("bot-sender-name");
+            const disclosure = row.getByTestId("thinking-trace").getByRole("button").first();
+            const nameBox = (await name.boundingBox())!;
+            const disclosureBox = (await disclosure.boundingBox())!;
+            const chevronBox = (await disclosure.locator("svg").boundingBox())!;
+            expect(Math.abs(nameBox.x - (chevronBox.x + chevronBox.width / 2))).toBeLessThan(1);
+            expect(disclosureBox.y - (nameBox.y + nameBox.height)).toBe(4);
+          }
+        } else {
+          await expect(names).toHaveCount(0);
+        }
         if (state === "long") {
           await expect(trace.getByText("Checked Alex’s calendar", { exact: true })).toBeVisible();
           await expect(
@@ -128,7 +146,7 @@ test("matches the timeline states across widths and themes", async ({ page }, te
         if (extraHeight > 0) await page.setViewportSize({ width, height: height + extraHeight });
         await expect(page.locator("html")).toHaveCSS("color-scheme", theme);
         await expect(page.locator("body")).toHaveJSProperty("scrollWidth", width);
-        const reply = page.getByTestId("message-bot-bubble");
+        const reply = page.getByTestId("message-bot-bubble").first();
         if (state !== "running-open") {
           const chevron = summary.locator("svg");
           const chevronBox = (await chevron.boundingBox())!;

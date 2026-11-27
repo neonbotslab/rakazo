@@ -3,11 +3,12 @@ import type { ProductEvent, ReplyTraceEntry, ReplyTraceTool } from "@rakazo/cont
 import { createRoot } from "react-dom/client";
 import { bootstrapI18n, i18n } from "../../src/lib/locale/i18n";
 import "../../src/styles.css";
-import { FixtureTranscript, reduceThreadEvents } from "./thread-fixture";
+import { BOT, FixtureTranscript, reduceThreadEvents } from "./thread-fixture";
 
 const params = new URLSearchParams(location.search);
 document.documentElement.dataset.theme = params.get("theme") === "dark" ? "dark" : "light";
 const state = params.get("state");
+const atlas = { ...BOT, botId: "bot-2", name: "Atlas" };
 const thought = (id: string, text: string): ReplyTraceEntry => ({ kind: "thinking", id, text });
 const tool = (
   id: string,
@@ -75,7 +76,46 @@ const events: Partial<ProductEvent>[] = [
   },
   { type: "run.started", payload: { trigger: "user", userId: "reader" } },
 ];
-if (state === "running-open") {
+if (state === "two-bot") {
+  const replies = [
+    {
+      id: "chief-reply",
+      botId: BOT.botId,
+      trace: [before, mine],
+      durationMs: 8_000,
+      text: "Alex is free Tuesday afternoon.",
+    },
+    {
+      id: "chief-follow-up",
+      botId: BOT.botId,
+      trace: [wednesday],
+      durationMs: 4_000,
+      text: "Wednesday could also work if Dana moves her focus block.",
+    },
+    {
+      id: "atlas-reply",
+      botId: atlas.botId,
+      trace: [dana, after],
+      durationMs: 12_000,
+      text: "Dana is free Tuesday from 1:00 to 4:30 PM Central. I’d suggest 2:30.",
+    },
+  ];
+  for (const { id, botId, trace, durationMs, text } of replies) {
+    events.push({
+      type: "thread.message.created",
+      botId,
+      payload: {
+        messageId: id,
+        role: "bot",
+        blocks: [
+          { kind: "steps", steps: [], trace, durationMs },
+          { kind: "text", text },
+        ],
+      },
+    });
+  }
+  events.push({ type: "run.completed" });
+} else if (state === "running-open") {
   events.push({ type: "agent.tool.called", payload: { traceTool: working } });
 } else if (state === "thinking") {
   events.push({
@@ -119,6 +159,7 @@ void bootstrapI18n("en").then(() => {
   createRoot(document.getElementById("root")!).render(
     <I18nProvider i18n={i18n}>
       <FixtureTranscript
+        bots={state === "two-bot" ? [BOT, atlas] : undefined}
         messages={messages}
         running={snapshot.run?.status === "running"}
         liveTrace={snapshot.liveTrace}

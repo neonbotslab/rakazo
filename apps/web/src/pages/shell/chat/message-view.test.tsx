@@ -211,11 +211,10 @@ it("names the calendar subject from the call's Asked details", async () => {
   ]);
   const call = trace.querySelectorAll("button")[1]!;
   act(() => call.click());
-  await act(async () => {
-    await flush();
+  await vi.waitFor(async () => {
+    await act(flush);
+    expect(call.textContent).toBe("Checked Alex’s calendar");
   });
-  expect(trace.textContent).toContain("Alex");
-  expect(call.textContent).toBe("Checked Alex’s calendar");
 });
 
 it("names both calls in an open repeat group before either subcall is opened", async () => {
@@ -231,11 +230,14 @@ it("names both calls in an open repeat group before either subcall is opened", a
     })),
   );
   act(() => trace.querySelectorAll("button")[1]!.click());
-  await act(async () => {
-    await flush();
+  await vi.waitFor(async () => {
+    await act(flush);
+    const subcalls = [...trace.querySelectorAll("button")].slice(2);
+    expect(subcalls.map((button) => button.textContent)).toEqual([
+      "Alex · Call 1",
+      "Alex · Call 2",
+    ]);
   });
-  const subcalls = [...trace.querySelectorAll("button")].slice(2);
-  expect(subcalls.map((button) => button.textContent)).toEqual(["Alex · Call 1", "Alex · Call 2"]);
 });
 
 it("refreshes an open live call when it finishes and keeps the details expanded", async () => {

@@ -64,6 +64,7 @@ import type { GalleryImage } from "./image-gallery";
 import { galleryImageKey, ImageGalleryProvider } from "./image-gallery";
 import { MessageView } from "./message-view";
 import { QuoteSelectionButton } from "./quote-selection-button";
+import { botTurnHeaderIds } from "./transcript-member-name";
 import { joinTranscriptTasks } from "./transcript-task-cards";
 import { useReplyAnnouncement } from "./use-reply-announcement";
 
@@ -146,7 +147,7 @@ export const Transcript = memo(function Transcript({
   answerableAskIds: Set<string>;
   dismissableAskIds: Set<string>;
   running: boolean;
-  workingTraceRuns?: readonly { id: string; userId?: string }[];
+  workingTraceRuns?: readonly { id: string; botId?: string; userId?: string }[];
   workingRoutine?: string;
   /** Your bubbles take the bot's color in its own chat. */
   userBubble?: { background: string; foreground: string };
@@ -314,8 +315,9 @@ export const Transcript = memo(function Transcript({
   // A jump needs older rows, and must keep them after it clears its request.
   if (tailOnly && scrollRequest) setTailOnly(false);
   const showTail = tailOnly && !scrollRequest;
+  const workingBots = new Map(workingTraceRuns?.map((run) => [run.id, run.botId]));
   const liveIds = new Set([
-    ...(workingTraceRuns?.map((run) => run.id) ?? []),
+    ...workingBots.keys(),
     ...Object.keys(liveReasoning ?? {}),
     ...Object.keys(liveTrace ?? {}),
   ]);
@@ -333,6 +335,7 @@ export const Transcript = memo(function Transcript({
         threadId: last?.threadId ?? "",
         seq: (last?.seq ?? 0) + placeholders.length + 1,
         role: "bot",
+        botId: workingBots.get(runId) ?? liveReasoning?.[runId]?.botId,
         runId,
         blocks: [],
         createdAt: last?.createdAt ?? "",
@@ -353,6 +356,7 @@ export const Transcript = memo(function Transcript({
     taskCards,
     olderCursor == null ? undefined : messages[0]?.createdAt,
   );
+  const botHeaderIds = botTurnHeaderIds(items);
   const shownItems = showTail ? rows.slice(-FIRST_FRAME_ROWS) : rows;
   const continuedSenderIds = continuedSenderMessageIds(
     shownItems.filter((item) => item.kind !== "hostPluginTask"),
@@ -792,6 +796,12 @@ export const Transcript = memo(function Transcript({
               Boolean(meId) &&
               workingTraceRuns?.some((run) => run.id === runId && run.userId === meId);
             const peerReceipt = isPeerReceiptBlocks(message.blocks);
+            const speakerName =
+              !peerReceipt && message.role === "bot" ? memberName?.(message.botId) : undefined;
+            const botHeader =
+              botHeaderIds.has(message.id) && message.botId
+                ? (speakerName ?? peerBot(message.botId)?.name)
+                : undefined;
             const messageReactions = reactionView.reactions.get(message.id);
             return (
               <Fragment key={message.id}>
@@ -839,6 +849,15 @@ export const Transcript = memo(function Transcript({
                                 } min-w-0 ${bubbleFrameWidth(message.role)}`
                       }
                     >
+                      {botHeader ? (
+                        <div
+                          className="mb-1 truncate text-left text-label text-foreground"
+                          data-testid="bot-sender-name"
+                          dir="auto"
+                        >
+                          {botHeader}
+                        </div>
+                      ) : null}
                       <MessageView
                         artifactTarget={artifactTarget}
                         message={message}
@@ -855,13 +874,7 @@ export const Transcript = memo(function Transcript({
                         peerExchange={exchanges.lines.get(message.id)}
                         hideSenderLabel={continuedSenderIds.has(message.id)}
                         onAnswer={onAnswer}
-                        speakerName={
-                          peerReceipt
-                            ? undefined
-                            : message.role === "bot"
-                              ? memberName?.(message.botId)
-                              : undefined
-                        }
+                        speakerName={speakerName}
                         memberName={memberName}
                         peerBot={peerBot}
                         replyParent={
