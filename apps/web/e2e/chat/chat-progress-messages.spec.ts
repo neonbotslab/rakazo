@@ -10,7 +10,7 @@ const states = [
   { name: "complete", live: false, reply: "Tuesday afternoon is free." },
 ];
 
-test("chat shows mid-turn progress without Working…", async ({ page }, testInfo) => {
+test("chat keeps narrated progress and shows an unnamed live turn", async ({ page }, testInfo) => {
   for (const viewport of viewports) {
     await page.setViewportSize(viewport);
     for (const state of states) {
@@ -21,15 +21,14 @@ test("chat shows mid-turn progress without Working…", async ({ page }, testInf
       expect(transcriptPadding).toBe(viewport.clearance);
       const bubbles = page.getByTestId("message-bot-bubble");
       await expect(bubbles).toHaveCount(2);
-      await expect(page.getByText("Chief", { exact: true })).toHaveCount(1);
+      await expect(page.getByText("Chief", { exact: true })).toHaveCount(0);
       await expect(bubbles.nth(0)).toHaveText("Checking your calendars…");
       await expect(bubbles.nth(1)).toHaveText(state.reply);
       await expect(
         page.locator('[data-message-id="bot-progress"]').getByTestId("message-hover-actions"),
       ).toHaveCount(1);
       await expect(page.locator(".rk-chat-markdown-streaming")).toHaveCount(state.live ? 1 : 0);
-      await expect(page.getByTestId("tool-activity")).toHaveCount(0);
-      await expect(page.getByRole("status")).toHaveCount(0);
+      await expect(page.getByTestId("thinking-trace")).toHaveCount(state.live ? 1 : 0);
       await expect(page.getByText("Working…")).toHaveCount(0);
       await expect(page.getByText("Done")).toHaveCount(0);
       await expect(page.locator("body")).toHaveJSProperty("scrollWidth", viewport.width);

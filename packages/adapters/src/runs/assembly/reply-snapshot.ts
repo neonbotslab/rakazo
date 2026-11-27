@@ -1,6 +1,7 @@
 import {
   MessageBlock,
   ReplyReasoningSchema,
+  ReplyTraceEntrySchema,
   storedImageMimeType,
   ToolResultModifiersSchema,
   ToolStepCallSchema,
@@ -15,6 +16,7 @@ const ReplySnapshotSchema = z.object({
   currentTextSegment: z.string(),
   messageSegments: z.array(MessageBlock),
   reasoning: ReplyReasoningSchema.optional(),
+  trace: z.array(ReplyTraceEntrySchema).optional(),
   pendingToolNames: z.array(z.string()),
   toolCalls: z.array(
     z.object({ label: z.string(), executionId: z.string(), tool: z.string().optional() }),
@@ -58,6 +60,7 @@ export function snapshotReply(reply: ReplyState): ReplySnapshot {
     currentTextSegment: reply.currentTextSegment,
     messageSegments: reply.messageSegments,
     ...(reply.reasoning && { reasoning: reply.reasoning }),
+    ...(reply.trace && { trace: reply.trace }),
     pendingToolNames: reply.pendingToolNames,
     toolCalls: reply.toolCalls,
     toolOutcomes: [...reply.toolOutcomes],

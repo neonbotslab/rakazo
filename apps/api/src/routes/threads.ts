@@ -29,6 +29,8 @@ import {
   IsolationError,
   isUniqueViolation,
   loadMessageAuthor,
+  loadOwnLiveToolCallDetail,
+  loadOwnToolCallDetail,
   loadOwnToolStepPreviews,
   lockSpaceGroup,
   THREAD_LOCK_TRANSACTION_OPTIONS,
@@ -230,6 +232,24 @@ export function threadsRoutes(ctx: RouterContext) {
         return loadOwnToolStepPreviews(deps.prisma, context.actor, {
           threadId: target.threadId,
           messageId: input.messageId,
+        });
+      }),
+      toolCallDetail: authed.threads.toolCallDetail.handler(async ({ context, input }) => {
+        const target = await resolveThreadTarget(deps.prisma, context.actor, input, {
+          includeArchived: true,
+        });
+        return loadOwnToolCallDetail(deps.prisma, context.actor, {
+          ...input,
+          threadId: target.threadId,
+        });
+      }),
+      liveToolCallDetail: authed.threads.liveToolCallDetail.handler(async ({ context, input }) => {
+        const target = await resolveThreadTarget(deps.prisma, context.actor, input, {
+          includeArchived: true,
+        });
+        return loadOwnLiveToolCallDetail(deps.prisma, context.actor, {
+          ...input,
+          threadId: target.threadId,
         });
       }),
       subscribe: authed.threads.subscribe.handler(async function* ({ context, input }) {

@@ -751,6 +751,47 @@ describe("notes that can't be posted as messages", () => {
     expect(finalText(finalizeRun)).toBe("Done.");
   });
 
+  it("saves reasoning containing a saved secret with the completed reply", async () => {
+    const start = Date.now();
+    const text = "Check password=fixture-credential before continuing.";
+    const { finalizeRun } = await runTurn("", false, undefined, ["fixture-credential"], "fyi", {
+      runtimeEvents: [
+        { type: "reasoning", phase: "start", at: start },
+        { type: "reasoning", phase: "delta", text },
+        { type: "reasoning", phase: "end", at: start + 1_000 },
+        { type: "done", text: "Checked." },
+      ],
+    });
+    expect(finalizeRun).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({
+        outcome: "completed",
+        reasoning: expect.objectContaining({ text }),
+      }),
+    );
+  });
+
+  it("redacts the saved secret from streamed and saved reply text", async () => {
+    const { append, finalizeRun } = await runTurn(
+      "",
+      false,
+      undefined,
+      ["fixture-credential"],
+      "fyi",
+      {
+        runtimeEvents: [
+          { type: "text", text: "Checked password=fixture-cre" },
+          { type: "text", text: "dential before continuing." },
+          { type: "done", text: "Checked password=fixture-credential before continuing." },
+        ],
+      },
+    );
+    const streamed = progress(append)
+      .map(({ payload }) => payload?.text ?? payload?.delta ?? "")
+      .join("");
+    expect(streamed).toBe("Checked password=[redacted] before continuing.");
+    expect(finalText(finalizeRun)).toBe(streamed);
+  });
+
   it("redacts notes like the reply", async () => {
     const { finalizeRun, append } = await runTurn("Done.", false, "The fake-secret-value is set.", [
       "fake-secret-value",

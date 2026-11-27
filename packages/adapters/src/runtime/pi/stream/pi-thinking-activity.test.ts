@@ -118,6 +118,7 @@ describe("provider thinking lifecycle boundary", () => {
       events([
         { ...start, partial },
         { type: "thinking_delta", contentIndex: 0, delta: "redacted placeholder", partial },
+        { type: "thinking_end", contentIndex: 0, content: "redacted placeholder", partial },
       ]),
       () => {},
       onReasoning,
@@ -129,4 +130,36 @@ describe("provider thinking lifecycle boundary", () => {
     );
     expect(JSON.stringify(onReasoning.mock.calls)).not.toContain("opaque");
   });
+
+  it.each(["", "Compare ", "\n\n"])(
+    "publishes the unstreamed part of a completed summary (%j)",
+    async (prefix) => {
+      const onReasoning = vi.fn();
+      const summary = "Compare both schedules.";
+      const partial: AssistantMessage = {
+        ...message,
+        content: [{ type: "thinking", thinking: summary }],
+      };
+      const stream = withPiThinkingActivity(
+        events([
+          { ...start, partial },
+          { type: "thinking_delta", contentIndex: 0, delta: prefix, partial },
+          { type: "thinking_end", contentIndex: 0, content: summary, partial },
+        ]),
+        () => {},
+        onReasoning,
+      );
+      for await (const item of stream) {
+        if (item.type === "thinking_end") {
+          const received = onReasoning.mock.calls.flat().filter((event) => event.phase === "delta");
+          expect(
+            received
+              .map((event) => event.text)
+              .join("")
+              .trim(),
+          ).toBe(summary);
+        }
+      }
+    },
+  );
 });

@@ -30,7 +30,7 @@ const liveThreadEvents = {
         ],
       },
     },
-    THREAD_REASONING_EVENTS,
+    ...THREAD_REASONING_EVENTS,
   ],
 };
 
@@ -314,10 +314,23 @@ function messagesWithLiveEvents(
   runs: NonNullable<Parameters<typeof projectThreadMessages>[1]>,
 ) {
   const projection = projectThreadMessages(liveEvents, runs);
+  const running = runs.filter((run) => run.status === "running");
   const liveReasoning = Object.fromEntries(
-    runs.flatMap((run) => {
+    running.flatMap((run) => {
       const reasoning = projection.liveReasoning?.[run.id];
-      return run.status === "running" && reasoning ? [[run.id, reasoning] as const] : [];
+      return reasoning ? [[run.id, reasoning] as const] : [];
+    }),
+  );
+  const liveTrace = Object.fromEntries(
+    running.flatMap((run) => {
+      const entries = projection.liveTrace?.[run.id];
+      return entries ? [[run.id, entries] as const] : [];
+    }),
+  );
+  const liveTracePending = Object.fromEntries(
+    running.flatMap((run) => {
+      const pending = projection.liveTracePending?.[run.id];
+      return pending ? [[run.id, pending] as const] : [];
     }),
   );
   const live = projection.messages.filter((message) => {
@@ -334,6 +347,8 @@ function messagesWithLiveEvents(
   return {
     messages: [...persisted, ...live],
     ...(Object.keys(liveReasoning).length > 0 && { liveReasoning }),
+    ...(Object.keys(liveTrace).length > 0 && { liveTrace }),
+    ...(Object.keys(liveTracePending).length > 0 && { liveTracePending }),
     ...(Object.keys(projection.liveToolCalls).length > 0
       ? { liveToolCalls: projection.liveToolCalls }
       : {}),

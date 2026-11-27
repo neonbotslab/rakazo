@@ -1,13 +1,9 @@
 import * as z from "zod";
 import { Id } from "../ids.js";
 import { MessageBlock, MessageRole } from "./message-blocks.js";
+import { ReasoningTextSchema } from "./reply-trace.js";
 
-export const MAX_REPLY_REASONING_BYTES = 16 * 1024;
-export const ReasoningTextSchema = z
-  .string()
-  .min(1)
-  .max(MAX_REPLY_REASONING_BYTES)
-  .refine((text) => new TextEncoder().encode(text).byteLength <= MAX_REPLY_REASONING_BYTES);
+export { MAX_REPLY_REASONING_BYTES, ReasoningTextSchema } from "./reply-trace.js";
 export const ReplyReasoningSchema = z.strictObject({
   text: ReasoningTextSchema,
   startedAt: z.iso.datetime(),

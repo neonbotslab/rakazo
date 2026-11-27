@@ -7,21 +7,9 @@ const REPLY_TEXT = "Tuesday at 2 pm is free.";
 const NOTE_TEXT = "Anna is free all Tuesday afternoon.";
 const STORAGE_KEY = "rakazo.showToolActivity";
 
-const viewports = [
-  { name: "desktop-1440x900", width: 1440, height: 900 },
-  { name: "mobile-390x844", width: 390, height: 844 },
-];
-
 async function openThread(page: Page, phase: "live" | "done") {
   await page.goto(`${fixture}?view=thread&phase=${phase}`);
   await expect(page.getByTestId("message-user-bubble")).toBeVisible();
-}
-
-/** Cards stay hidden until this browser saved "on". Seed only when a test needs them visible. */
-async function seedToolActivityOn(page: Page) {
-  await page.addInitScript((key) => {
-    if (localStorage.getItem(key) == null) localStorage.setItem(key, "on");
-  }, STORAGE_KEY);
 }
 
 async function setToggle(page: Page, on: boolean) {
@@ -41,59 +29,21 @@ async function setToggle(page: Page, on: boolean) {
   await toggle.scrollIntoViewIfNeeded();
 }
 
-test("tool activity shows for live and finished runs when the user turned it on", async ({
-  page,
-}, testInfo) => {
-  await seedToolActivityOn(page);
-  for (const viewport of viewports) {
-    await page.setViewportSize(viewport);
+test("saved step-only records and notes still appear in one timeline", async ({ page }) => {
+  await page.addInitScript((key) => localStorage.setItem(key, "on"), STORAGE_KEY);
+  await openThread(page, "live");
+  const live = page.getByTestId("thinking-trace");
+  await live.getByRole("button", { name: "Check conflicts…" }).click();
+  await expect(live.getByTestId("thinking-trace-rail")).toContainText("Open calendar");
+  await expect(page.getByTestId("message-bot-bubble")).toHaveCount(0);
 
-    await openThread(page, "live");
-    const liveLine = page.getByTestId("tool-activity-line");
-    await expect(liveLine).toHaveCount(1);
-    await expect(page.getByTestId("message-bot-bubble")).toHaveCount(0);
-    const liveCard = page.getByTestId("tool-activity");
-    await expect(liveCard.locator("button[aria-expanded]")).toHaveAttribute(
-      "aria-expanded",
-      "true",
-    );
-    await expect(liveCard.locator("button[aria-expanded]")).toContainText(/Working…\s*8 tools/);
-    await expect(page.getByTestId("tool-rows-hidden")).toHaveText("+2 earlier steps");
-    await expect(page.getByTestId("tool-rows")).not.toContainText("Open calendar");
-    await expect(page.getByTestId("tool-rows")).toContainText("Check conflicts");
-    await expect(page.getByTestId("tool-step-note")).toHaveCount(0);
-    await expect(page.locator("body")).toHaveJSProperty("scrollWidth", viewport.width);
-    await captureScreenshot(page, testInfo, `default-live-${viewport.name}`);
-
-    await liveCard.locator("button[aria-expanded]").click();
-    await expect(liveCard.locator("button[aria-expanded]")).toHaveAttribute(
-      "aria-expanded",
-      "false",
-    );
-
-    await openThread(page, "done");
-    await expect(page.getByTestId("message-bot-bubble")).toContainText(REPLY_TEXT);
-    const doneCard = page.getByTestId("tool-activity");
-    await expect(doneCard).toHaveCount(1);
-    await expect(doneCard.locator("button[aria-expanded]")).toHaveAttribute(
-      "aria-expanded",
-      "false",
-    );
-    await expect(doneCard.locator("button[aria-expanded]")).toContainText(/Done\s*8 tools\s*12s/);
-    await captureScreenshot(page, testInfo, `default-done-collapsed-${viewport.name}`);
-
-    await doneCard.locator("button[aria-expanded]").click();
-    await expect(doneCard.locator("button[aria-expanded]")).toHaveAttribute(
-      "aria-expanded",
-      "true",
-    );
-    await expect(page.getByTestId("tool-rows-hidden")).toHaveCount(0);
-    await expect(page.getByTestId("tool-rows")).toContainText("Open calendar");
-    await expect(page.getByTestId("tool-rows")).toContainText("Check conflicts");
-    await expect(page.getByTestId("tool-step-note")).toHaveText(NOTE_TEXT);
-    await expect(page.locator("body")).toHaveJSProperty("scrollWidth", viewport.width);
-    await captureScreenshot(page, testInfo, `default-done-expanded-${viewport.name}`);
-  }
+  await openThread(page, "done");
+  const done = page.getByTestId("thinking-trace");
+  const summary = done.getByRole("button", { name: "Worked for 12s" });
+  await expect(summary).toHaveAttribute("aria-expanded", "false");
+  await summary.click();
+  await expect(done.getByTestId("thinking-trace-rail")).toContainText(NOTE_TEXT);
+  await expect(page.getByTestId("message-bot-bubble")).toContainText(REPLY_TEXT);
 });
 
 test("the settings toggle hides and restores tool activity", async ({ page }, testInfo) => {
@@ -114,13 +64,13 @@ test("the settings toggle hides and restores tool activity", async ({ page }, te
 
   await openThread(page, "done");
   await expect(page.getByTestId("message-bot-bubble")).toHaveText(REPLY_TEXT);
-  await expect(page.getByTestId("tool-activity")).toHaveCount(0);
-  await expect(page.getByText(/Done\s*8 tools/)).toHaveCount(0);
+  await expect(page.getByTestId("thinking-trace")).toHaveCount(0);
   await captureScreenshot(page, testInfo, "off-done");
 
   await openThread(page, "live");
-  await expect(page.getByTestId("tool-activity")).toHaveCount(0);
-  await expect(page.getByTestId("tool-activity-line")).toHaveCount(0);
+  await expect(
+    page.getByTestId("thinking-trace").getByRole("button", { name: "Thinking…" }),
+  ).toBeVisible();
   await expect(page.getByTestId("message-bot-bubble")).toHaveCount(0);
   await captureScreenshot(page, testInfo, "off-live");
 
@@ -128,9 +78,9 @@ test("the settings toggle hides and restores tool activity", async ({ page }, te
   await captureScreenshot(page, testInfo, "settings-tool-activity-on");
 
   await openThread(page, "done");
-  await expect(page.getByTestId("tool-activity")).toHaveCount(1);
-  await expect(page.getByTestId("tool-activity").locator("button[aria-expanded]")).toContainText(
-    /Done\s*8 tools/,
+  await expect(page.getByTestId("thinking-trace")).toHaveCount(1);
+  await expect(page.getByTestId("thinking-trace").locator("button[aria-expanded]")).toContainText(
+    "Worked for 12s",
   );
   await captureScreenshot(page, testInfo, "on-again-done");
 });

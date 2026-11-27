@@ -30,6 +30,7 @@ import {
 } from "../assembly/silent-reply.js";
 import type { ExecutorDeps } from "../executor/executor-deps.js";
 import { PAGE_BROWSER_TOOL_NAMES } from "../tools/run-tool-selection.js";
+import { withSavedReplyTrace } from "../turn/run-reply-trace.js";
 import {
   clampUserProgressMessage,
   extractNarrationText,
@@ -198,7 +199,7 @@ export function withReplyToolOutcomes(
   reply: ReplyState,
   unfinished?: ToolStepOutcome,
 ): MessageBlock[] {
-  return withToolStepOutcomes(
+  const blocks = withToolStepOutcomes(
     reply.messageSegments,
     reply.toolCalls.map(({ label, executionId, tool }) => ({
       label,
@@ -208,6 +209,7 @@ export function withReplyToolOutcomes(
       resultModifiedBy: reply.toolResultModifiers?.get(executionId),
     })),
   );
+  return withSavedReplyTrace(blocks, reply);
 }
 
 export function tryFlushPendingTools(reply: ReplyState) {

@@ -51,6 +51,9 @@ export function FixtureTranscript({
   messages,
   running,
   liveReasoning,
+  liveTrace,
+  workingTraceRuns,
+  meId,
   showToolActivity,
   header,
   answerableAskIds = NO_IDS,
@@ -59,6 +62,9 @@ export function FixtureTranscript({
   messages: readonly ThreadMessage[];
   running: boolean;
   liveReasoning?: ThreadSnapshot["liveReasoning"];
+  liveTrace?: ThreadSnapshot["liveTrace"];
+  workingTraceRuns?: readonly { id: string; userId?: string }[];
+  meId?: string;
   showToolActivity: boolean;
   header?: ReactNode;
   /** Messages whose ask cards take answers; the rest render as no longer active. */
@@ -93,7 +99,9 @@ export function FixtureTranscript({
           dismissableAskIds={answerableAskIds}
           running={running}
           liveReasoning={liveReasoning}
-          workingBots={running ? [bots[0]!] : []}
+          liveTrace={liveTrace}
+          workingTraceRuns={workingTraceRuns}
+          meId={meId}
           onLoadOlder={noop}
           onOpenBot={noop}
           onAnswer={resolved}

@@ -16,6 +16,7 @@ import type {
   MessageBlock,
   ReplyMode,
   ReplyReasoning,
+  ReplyTraceEntry,
   ToolStepCall,
 } from "@rakazo/contracts";
 import type { ToolStepOutcome } from "@rakazo/core";
@@ -92,6 +93,8 @@ export interface RunComputerUseState {
 
 export interface ReplyState {
   reasoning?: ReplyReasoning;
+  trace?: ReplyTraceEntry[];
+  traceLastToolKey?: string;
   assembled: string;
   currentTextSegment: string;
   messageSegments: MessageBlock[];

@@ -101,7 +101,6 @@ function Host({ messages }: { messages: ThreadMessage[] }) {
       answerableAskIds={none}
       dismissableAskIds={none}
       running={false}
-      workingBots={[]}
       onLoadOlder={reply}
       onOpenBot={reply}
       onAnswer={answer}
