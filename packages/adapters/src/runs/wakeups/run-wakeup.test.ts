@@ -521,6 +521,7 @@ describe("durable direct run wakeups", () => {
 
   it("never holds one run's start behind another run, however slow", async () => {
     const f = fixture();
+    f.rows.set("stuck", { status: "queued", wakeAt: null });
     const stuck = deferred();
     const entered: string[] = [];
     try {
@@ -532,7 +533,9 @@ describe("durable direct run wakeups", () => {
       } as unknown as BackgroundJobHandlers);
       await f.publisher.enqueue(runContinueJob("stuck"));
       for (let index = 0; index < 20; index += 1) {
-        await f.publisher.enqueue(runContinueJob(`chat-${index}`));
+        const runId = `chat-${index}`;
+        f.rows.set(runId, { status: "queued", wakeAt: null });
+        await f.publisher.enqueue(runContinueJob(runId));
       }
       await vi.waitFor(() => expect(entered).toHaveLength(21));
     } finally {
@@ -592,6 +595,7 @@ describe("durable direct run wakeups", () => {
     const admission = vi.spyOn(RunExecutionHost.prototype, "execute").mockResolvedValue(false);
     try {
       await f.host.start({ "run.continue": vi.fn() } as unknown as BackgroundJobHandlers);
+      f.rows.set("full", { status: "queued", wakeAt: null });
       await f.publisher.enqueue(runContinueJob("full"));
       await vi.waitFor(() => expect(publish).toHaveBeenCalledOnce());
       await new Promise((resolve) => setTimeout(resolve, 20));
@@ -604,6 +608,7 @@ describe("durable direct run wakeups", () => {
 
   it("starts a run again when it is made due while this process is still finishing it", async () => {
     const f = fixture();
+    f.rows.set("answered", { status: "queued", wakeAt: null });
     const finishing = deferred();
     const handler = vi.fn(async () => {
       if (handler.mock.calls.length === 1) await finishing.promise;

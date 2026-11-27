@@ -516,11 +516,11 @@ describePostgres("direct run dispatch (PostgreSQL)", () => {
     }
   });
 
-  it("preserves delayed retries, recovers expired leases, and only resumes human waits after an explicit wake", async () => {
+  it("preserves delayed retries, recovers expired leases, and honors explicit takeover wakes", async () => {
     const due = new Date(Date.now() + 60_000);
     const delayed = await createRun({ wakeAt: due });
     const expired = await createRun({ status: "running", leaseExpiresAt: new Date(0) });
-    const waiting = await createRun({ status: "waiting_input" });
+    const waiting = await createRun({ status: "waiting_takeover" });
     const realtime = new InMemoryRealtimeFanout();
     vi.spyOn(realtime, "publish").mockRejectedValue(new Error("fixture notification lost"));
     const starter = new RunStarter(realtime);
@@ -552,6 +552,33 @@ describePostgres("direct run dispatch (PostgreSQL)", () => {
       });
     } finally {
       await host.stop();
+    }
+  });
+
+  it("keeps a run awaiting input parked even with a stale wake time", async () => {
+    const waiting = await createRun({ status: "waiting_input", wakeAt: new Date(0) });
+    const queued = await createRun();
+    const realtime = new InMemoryRealtimeFanout();
+    const starter = new RunStarter(realtime);
+    const host = new RunWorkerHost(db.prisma, realtime, starter);
+    const entered: string[] = [];
+    try {
+      await host.start({
+        "run.continue": async ({ runId }) => {
+          entered.push(runId);
+        },
+      } as BackgroundJobHandlers);
+      await wait(() => expect(entered).toContain(queued.id));
+      expect(entered).not.toContain(waiting.id);
+      await expect(claimRun({ prisma: system } as ExecutorDeps, waiting, "worker")).resolves.toBe(
+        undefined,
+      );
+    } finally {
+      await host.stop();
+      await system.run.updateMany({
+        where: { id: { in: [waiting.id, queued.id] } },
+        data: { status: "cancelled" },
+      });
     }
   });
 

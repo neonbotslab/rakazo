@@ -24,7 +24,7 @@ import { findRunRecoveryBlockers } from "../lifecycle/run-recovery.js";
 
 const RUN_READY_TOPIC = "runs:ready";
 const INTERACTIVE_QUEUE_WARNING_MS = 30_000;
-const RESUMABLE = ["queued", "waiting_input", "waiting_takeover"];
+const RESUMABLE = ["queued", "waiting_takeover"];
 
 /**
  * How long a stopping process lets the runs it is executing end their turn before it hands them
@@ -183,7 +183,7 @@ export class RunJobPublisher implements JobPublisher, JobQueueOrder {
 
   async enqueue(job: BackgroundJob): Promise<void> {
     if (job.name !== "run.continue") return this.background.enqueue(job);
-    await this.prisma.run.updateMany({
+    const { count } = await this.prisma.run.updateMany({
       where: {
         id: job.payload.runId,
         status: { in: RESUMABLE },
@@ -191,7 +191,7 @@ export class RunJobPublisher implements JobPublisher, JobQueueOrder {
       },
       data: { wakeAt: job.availableAt ?? new Date() },
     });
-    this.starter.start(job.payload.runId, job.availableAt);
+    if (count > 0) this.starter.start(job.payload.runId, job.availableAt);
   }
 
   async enqueueIn(tx: JobTransaction, job: BackgroundJob): Promise<void> {
@@ -443,7 +443,7 @@ export class RunWorkerHost implements JobWorkerHost {
         OR: [
           { status: "queued", AND: [due] },
           { status: { in: ["leased", "running"] }, leaseExpiresAt: { lte: now } },
-          { status: { in: ["waiting_input", "waiting_takeover"] }, wakeAt: { lte: now } },
+          { status: "waiting_takeover", wakeAt: { lte: now } },
         ],
       },
       orderBy: [{ createdAt: "asc" }, { id: "asc" }],

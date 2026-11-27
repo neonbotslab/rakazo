@@ -431,7 +431,7 @@ export async function claimRun(
               claimWaitsForChat(run, now),
             ],
             OR: [
-              { status: { in: ["queued", "waiting_input", "waiting_takeover"] } },
+              { status: { in: ["queued", "waiting_takeover"] } },
               {
                 status: { in: ["leased", "running"] },
                 leaseExpiresAt: { lte: now },
@@ -457,7 +457,6 @@ export async function claimRun(
   if (
     current.status === "queued" ||
     current.status === "leased" ||
-    current.status === "waiting_input" ||
     current.status === "waiting_takeover"
   ) {
     assertTransition(current.status as RunStatus, "running");
