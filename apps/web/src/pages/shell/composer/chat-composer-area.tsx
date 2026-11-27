@@ -1,8 +1,12 @@
 import { Trans, useLingui } from "@lingui/react/macro";
 import type { AgentSkillCatalogEntry, Bot, Group, ThreadSnapshot } from "@rakazo/contracts";
 import { channelMessageSender, otherAuthor } from "@rakazo/core";
+import { cn } from "@rakazo/ui-web";
 import type { ComponentProps } from "react";
 import type { ArtifactTarget } from "../../../lib/pages/artifact-open";
+import { activeTaskCards } from "../../../lib/plugin-host/active-task-cards";
+import { useHostPluginChatCards } from "../../../lib/plugin-host/chat-cards";
+import { PinnedTaskCard } from "../chat/pinned-task-card";
 import type { Panel } from "../right-panel-state";
 import type { SettingsSection } from "../shell-overlay-url";
 import { Composer } from "./composer";
@@ -11,7 +15,7 @@ import type { useComposerActions } from "./use-composer-actions";
 
 type ComposerProps = ComponentProps<typeof Composer>;
 
-/** The open chat's composer, under the transcript, with the teaching notice above it. */
+/** The open chat's composer, pinned task card and teaching notice. */
 export function ChatComposerArea({
   composer,
   inGroup,
@@ -68,6 +72,7 @@ export function ChatComposerArea({
   setModelFocusRequest: (request: number) => void;
 }) {
   const { t } = useLingui();
+  const tasks = activeTaskCards(useHostPluginChatCards(meId, inGroup ? undefined : active));
   if (!active && !activeGroup) return null;
   const { replyTarget } = composer;
   const replyTargetName = replyTarget
@@ -79,8 +84,11 @@ export function ChatComposerArea({
     : undefined;
   const chatKey = inGroup ? `group:${groupId}` : `bot:${active?.id}`;
   return (
-    // Let messages continue behind the composer's rounded top corners.
-    <div className="pointer-events-none relative z-30 -mt-7">
+    // Let the transcript show behind the composer's rounded corners when the card is absent.
+    <div
+      className={cn("pointer-events-none relative z-30 shrink-0", tasks.length === 0 && "-mt-7")}
+    >
+      {tasks.length ? <PinnedTaskCard key={chatKey} tasks={tasks} /> : null}
       {recordingSkill ? (
         <div className="pointer-events-auto bg-background px-6 pb-2 text-center text-body-sm text-destructive">
           <Trans>Teaching in progress. Stop teaching before sending a new message.</Trans>

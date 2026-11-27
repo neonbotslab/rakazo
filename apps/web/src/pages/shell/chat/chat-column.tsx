@@ -36,7 +36,7 @@ export function ChatColumn({
       data-space-switch="main"
       aria-hidden={drawerOpen || undefined}
       inert={drawerOpen || covered}
-      className="relative isolate flex min-w-0 flex-1 flex-col bg-background"
+      className="group/chat relative isolate flex min-w-0 flex-1 flex-col bg-background"
     >
       {/* Inside main so the composer and its menus stay above it. */}
       {!drawerOpen ? (

@@ -25,9 +25,7 @@ export function firstVisibleTranscriptRow(
   element: Pick<HTMLElement, "querySelectorAll" | "scrollTop"> | null,
 ): HTMLElement | null {
   if (!element) return null;
-  for (const row of element.querySelectorAll<HTMLElement>(
-    "[data-message-id],[data-host-plugin-task-id]",
-  )) {
+  for (const row of element.querySelectorAll<HTMLElement>("[data-message-id]")) {
     if (row.offsetTop + row.offsetHeight > element.scrollTop) return row;
   }
   return null;

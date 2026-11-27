@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import type { HostPluginTaskCard, ThreadMessage } from "@rakazo/contracts";
+import type { ThreadMessage } from "@rakazo/contracts";
 import { foldPeerReplies } from "@rakazo/core";
 import type { ComponentProps, ReactNode, RefObject } from "react";
 import { act } from "react";
@@ -133,54 +133,6 @@ function baseProps(messages: readonly ThreadMessage[]): ComponentProps<typeof Tr
 function render(props: ComponentProps<typeof Transcript>) {
   act(() => root.render(<Transcript {...props} />));
 }
-
-it("places hosted tasks in the loaded transcript without remounting a task when history expands", () => {
-  const messages = [
-    textMessage("first", "user", "Start the report"),
-    textMessage("last", "bot", "The report is underway"),
-  ];
-  const first = Date.parse(messages[0]!.createdAt);
-  const last = Date.parse(messages[1]!.createdAt);
-  const task: HostPluginTaskCard = {
-    id: "recent-task",
-    title: "Review the report",
-    status: "running",
-    startedAt: first + (last - first) / 2,
-    href: "https://tasks.example.test/recent",
-    progress: 0.4,
-  };
-  const earlier = {
-    ...task,
-    id: "prior-task",
-    title: "Prepare the outline",
-    startedAt: first - 30_000,
-  };
-  const props = baseProps(messages);
-  const rows = () =>
-    [
-      ...container.querySelectorAll<HTMLElement>("[data-message-id],[data-host-plugin-task-id]"),
-    ].map((row) => row.dataset.messageId ?? row.dataset.hostPluginTaskId);
-  render({ ...props, olderCursor: 1, taskCards: [earlier, task] });
-  expect(rows()).toEqual(["first", "recent-task", "last"]);
-  const card = container.querySelector('[data-host-plugin-task-id="recent-task"]');
-  expect(card?.querySelector('a[href="https://tasks.example.test/recent"]')?.textContent).toContain(
-    "Running",
-  );
-
-  const prepended = {
-    ...textMessage("prior", "user", "Prepare an outline"),
-    createdAt: new Date(first - 60_000).toISOString(),
-  };
-  render({
-    ...props,
-    transcript: foldPeerReplies([prepended, ...messages]),
-    taskCards: [earlier, { ...task, status: "done", endedAt: last }],
-  });
-  expect(rows()).toEqual(["prior", "prior-task", "first", "recent-task", "last"]);
-  expect(container.querySelector('[data-host-plugin-task-id="recent-task"]')).toBe(card);
-  expect(card?.textContent).toContain("Done");
-  expect(card?.querySelector('[role="progressbar"]')).toBeNull();
-});
 
 function selectText(element: Element, text: string, notify = true) {
   const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT);

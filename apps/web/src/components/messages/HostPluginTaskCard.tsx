@@ -1,43 +1,37 @@
 import { useLingui } from "@lingui/react/macro";
 import { useNow } from "@rakazo/chat-ui/hooks";
 import { useExternalLinkOpener } from "@rakazo/chat-ui/web";
-import type { HostPluginTaskCard } from "@rakazo/contracts";
 import { formatCompactDuration } from "@rakazo/core";
+import { cn } from "@rakazo/ui-web";
 import { Card, CardContent, CardTitle } from "@rakazo/ui-web/components/ui/card";
 import { Progress } from "@rakazo/ui-web/components/ui/progress";
 import { ArrowUpRight } from "lucide-react";
-import type { MouseEvent } from "react";
+import type { MouseEvent, ReactNode } from "react";
 import { memo } from "react";
+import type { ActiveTaskCard } from "../../lib/plugin-host/active-task-cards";
 
-const statusDot: Record<HostPluginTaskCard["status"], string> = {
+const statusDot: Record<ActiveTaskCard["status"], string> = {
   starting: "bg-muted-foreground",
   running: "bg-success",
   waiting: "bg-warning",
   awaitingApproval: "bg-warning",
-  done: "bg-success",
-  failed: "bg-destructive",
-  lost: "bg-destructive",
 };
 
 export const HostPluginTaskCardView = memo(function HostPluginTaskCardView({
   task,
+  children,
 }: {
-  task: HostPluginTaskCard;
+  task: ActiveTaskCard;
+  children: ReactNode;
 }) {
   const { t } = useLingui();
-  const active = task.status !== "done" && task.status !== "failed" && task.status !== "lost";
-  const now = useNow(active ? 1000 : null);
-  const end = active ? now : task.endedAt;
-  const elapsed =
-    end === undefined ? null : formatCompactDuration(Math.max(0, end - task.startedAt));
+  const elapsed = formatCompactDuration(Math.max(0, useNow(1000) - task.startedAt));
+  const needsApproval = task.status === "awaitingApproval";
   const labels = {
     starting: t`Starting`,
     running: t`Running`,
     waiting: t`Waiting`,
     awaitingApproval: t`Awaiting approval`,
-    done: t`Done`,
-    failed: t`Failed`,
-    lost: t`Lost`,
   };
   const { open, dialog } = useExternalLinkOpener();
   const openTask = (event: MouseEvent<HTMLAnchorElement>) => {
@@ -47,44 +41,58 @@ export const HostPluginTaskCardView = memo(function HostPluginTaskCardView({
   };
   return (
     <>
-      <a
-        href={task.href}
-        target="_blank"
-        rel="noopener noreferrer"
-        onClick={openTask}
-        onAuxClick={openTask}
-        className="group/task block w-96 max-w-full rounded-xl no-underline outline-none focus-visible:ring-2 focus-visible:ring-ring"
+      <Card
+        size="sm"
+        className={cn(
+          "max-h-[min(7.5rem,25dvh)] max-w-xl flex-row items-start gap-0 overflow-y-auto py-0",
+          needsApproval && "ring-warning/40",
+        )}
       >
-        <Card size="sm" className="group-hover/task:ring-foreground/25">
-          <CardContent className="flex flex-col gap-2">
-            <div className="flex flex-wrap items-start justify-between gap-x-3 gap-y-1">
-              <CardTitle className="min-w-0 flex-1 wrap-anywhere" dir="auto">
+        <a
+          href={task.href}
+          target="_blank"
+          rel="noopener noreferrer"
+          onClick={openTask}
+          onAuxClick={openTask}
+          className="group/task block min-w-0 flex-1 rounded-xl py-2 no-underline outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset"
+        >
+          <CardContent className="flex flex-col gap-1">
+            <div className="flex min-w-0 items-center gap-1.5">
+              <CardTitle
+                className="truncate group-hover/task:underline"
+                dir="auto"
+                title={task.title}
+              >
                 {task.title}
               </CardTitle>
-              <span className="flex items-center gap-1.5 whitespace-nowrap text-body-sm text-muted-foreground">
+              <ArrowUpRight
+                aria-hidden="true"
+                size={13}
+                className="shrink-0 text-muted-foreground"
+              />
+            </div>
+            <div className="flex min-w-0 items-center gap-2 text-body-sm text-muted-foreground">
+              <span className="flex shrink-0 items-center gap-1.5">
                 <span
                   aria-hidden="true"
-                  className={`size-1.5 rounded-full ${statusDot[task.status]}`}
+                  className={`size-1.5 shrink-0 rounded-full ${statusDot[task.status]}`}
                 />
                 {labels[task.status]}
-                <ArrowUpRight aria-hidden="true" size={13} />
               </span>
+              <span className="shrink-0" dir="auto">
+                {elapsed}
+              </span>
+              {task.box ? (
+                <span className="truncate" dir="auto">
+                  {task.box}
+                </span>
+              ) : null}
+              {task.model ? (
+                <span className="truncate" dir="auto">
+                  {task.model}
+                </span>
+              ) : null}
             </div>
-            {task.box || task.model || elapsed ? (
-              <div className="flex flex-wrap gap-x-3 gap-y-1 text-body-sm text-muted-foreground">
-                {task.box ? (
-                  <span className="wrap-anywhere" dir="auto">
-                    {task.box}
-                  </span>
-                ) : null}
-                {task.model ? (
-                  <span className="wrap-anywhere" dir="auto">
-                    {task.model}
-                  </span>
-                ) : null}
-                {elapsed ? <span dir="auto">{elapsed}</span> : null}
-              </div>
-            ) : null}
             {task.status === "running" ? (
               <Progress
                 aria-label={t`Task progress`}
@@ -93,8 +101,9 @@ export const HostPluginTaskCardView = memo(function HostPluginTaskCardView({
               />
             ) : null}
           </CardContent>
-        </Card>
-      </a>
+        </a>
+        {children}
+      </Card>
       {dialog}
     </>
   );

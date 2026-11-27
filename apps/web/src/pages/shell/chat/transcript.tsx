@@ -4,7 +4,6 @@ import { useTimeout } from "@rakazo/chat-ui/hooks";
 import type {
   BotAvatarSet,
   ComputerReleaseReason,
-  HostPluginTaskCard,
   LoginFieldInput,
   MessageReaction,
   ThreadMessage,
@@ -35,6 +34,7 @@ import {
   startTransition,
   useCallback,
   useEffect,
+  useEffectEvent,
   useLayoutEffect,
   useMemo,
   useRef,
@@ -42,7 +42,6 @@ import {
 } from "react";
 import { ActiveBotGlyph } from "../../../components/ai/CollaborationMarker";
 import { VoiceChatCard } from "../../../components/call/VoiceChatCard";
-import { HostPluginTaskCardView } from "../../../components/messages/HostPluginTaskCard";
 import {
   isDetachedRange,
   lastSelectedText,
@@ -66,7 +65,6 @@ import type { GalleryImage } from "./image-gallery";
 import { galleryImageKey, ImageGalleryProvider } from "./image-gallery";
 import { MessageView } from "./message-view";
 import { QuoteSelectionButton } from "./quote-selection-button";
-import { joinTranscriptTasks } from "./transcript-task-cards";
 import { useReplyAnnouncement } from "./use-reply-announcement";
 
 /** Bubbles stop at a readable line length instead of stretching with wide windows. */
@@ -79,7 +77,6 @@ export function bubbleFrameWidth(role: ThreadMessage["role"]) {
 /** Rows drawn in the frame a chat opens; the rest mount right after without blocking input. */
 const FIRST_FRAME_ROWS = 20;
 const PAGE_PREVIEW_SCROLL = "[data-page-preview-scroll]";
-const NO_TASK_CARDS: readonly HostPluginTaskCard[] = [];
 
 export const Transcript = memo(function Transcript({
   scrollRef,
@@ -88,7 +85,6 @@ export const Transcript = memo(function Transcript({
   followRequest,
   artifactTarget,
   transcript,
-  taskCards = NO_TASK_CARDS,
   meId,
   showToolActivity,
   olderCursor,
@@ -134,7 +130,6 @@ export const Transcript = memo(function Transcript({
   followRequest: number;
   artifactTarget: ArtifactTarget;
   transcript: FoldedTranscript<ThreadMessage>;
-  taskCards?: readonly HostPluginTaskCard[];
   meId?: string;
   showToolActivity: boolean;
   olderCursor: number | null;
@@ -316,17 +311,8 @@ export const Transcript = memo(function Transcript({
     (item) =>
       item.kind === "voiceChat" || messageHasVisibleBlocks(item.message.blocks, showToolActivity),
   );
-  const rows = joinTranscriptTasks(
-    items,
-    taskCards,
-    olderCursor == null ? undefined : messages[0]?.createdAt,
-  );
-  const shownItems = showTail ? rows.slice(-FIRST_FRAME_ROWS) : rows;
-  const continuedSenderIds = continuedSenderMessageIds(
-    shownItems.filter((item) => item.kind !== "hostPluginTask"),
-    separatorIds,
-    unreadDividerId,
-  );
+  const shownItems = showTail ? items.slice(-FIRST_FRAME_ROWS) : items;
+  const continuedSenderIds = continuedSenderMessageIds(shownItems, separatorIds, unreadDividerId);
   const workingLabel =
     liveActivityLine(messages) ?? (workingRoutine ? t`Running ${workingRoutine}…` : t`Thinking…`);
   const [quoteDraft, setQuoteDraft] = useState<{
@@ -558,7 +544,7 @@ export const Transcript = memo(function Transcript({
     snapToEnd();
   }, [followRequest, messages, snapToEnd]);
 
-  useLayoutEffect(() => {
+  const updateFollow = useEffectEvent(() => {
     const element = scrollRef.current;
     const replyRow =
       element && following.current
@@ -589,7 +575,24 @@ export const Transcript = memo(function Transcript({
     else if (element) {
       setAtEnd(transcriptIsNearEnd(element) && !isHeld(element, heldAt.current));
     }
-  }, [messages, taskCards, running, showTail, scrollRef, snapToEnd]);
+  });
+
+  useLayoutEffect(() => {
+    updateFollow();
+  }, [messages, running, showTail]);
+
+  useLayoutEffect(() => {
+    const element = scrollRef.current;
+    if (!element || typeof ResizeObserver === "undefined") return;
+    let height = element.clientHeight;
+    const observer = new ResizeObserver(() => {
+      if (element.clientHeight === height) return;
+      height = element.clientHeight;
+      if (!autoScrolling.current) updateFollow();
+    });
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, [scrollRef]);
 
   useLayoutEffect(() => {
     const button = jumpButtonRef.current;
@@ -691,7 +694,7 @@ export const Transcript = memo(function Transcript({
               following.current = false;
             }
           }}
-          className={`rk-scroll isolate flex min-h-0 flex-1 flex-col gap-2 overflow-x-hidden overflow-y-auto scroll-pt-(--chat-top-clearance) scroll-pb-7 pt-(--chat-top-clearance) pb-12 md:pb-13 ${TRANSCRIPT_CONTENT_PADDING}`}
+          className={`rk-scroll isolate flex min-h-0 flex-1 flex-col gap-2 overflow-x-hidden overflow-y-auto scroll-pt-(--chat-top-clearance) scroll-pb-7 pt-(--chat-top-clearance) pb-12 group-has-[[data-pinned-task]]/chat:scroll-pb-0 group-has-[[data-pinned-task]]/chat:pb-5 md:pb-13 md:group-has-[[data-pinned-task]]/chat:pb-6 ${TRANSCRIPT_CONTENT_PADDING}`}
           style={
             userBubble
               ? ({
@@ -715,17 +718,6 @@ export const Transcript = memo(function Transcript({
             </Button>
           ) : null}
           {shownItems.map((item) => {
-            if (item.kind === "hostPluginTask") {
-              return (
-                <div
-                  key={`host-plugin:${item.task.id}`}
-                  data-host-plugin-task-id={item.task.id}
-                  className={`relative min-w-0 ${bubbleFrameWidth("bot")}`}
-                >
-                  <HostPluginTaskCardView task={item.task} />
-                </div>
-              );
-            }
             if (item.kind === "voiceChat") {
               return (
                 <div key={item.key}>
@@ -890,7 +882,7 @@ export const Transcript = memo(function Transcript({
         aria-hidden={atEnd}
         tabIndex={atEnd ? -1 : 0}
         onClick={jumpToLatest}
-        className={`absolute bottom-11 left-1/2 z-20 -translate-x-1/2 shadow-md transition-[opacity,transform,background-color] duration-200 ease-[cubic-bezier(.22,1,.36,1)] motion-reduce:transition-none ${
+        className={`absolute bottom-11 left-1/2 z-20 -translate-x-1/2 shadow-md transition-[opacity,transform,background-color] duration-200 ease-[cubic-bezier(.22,1,.36,1)] group-has-[[data-pinned-task]]/chat:bottom-4 motion-reduce:transition-none ${
           atEnd ? "pointer-events-none translate-y-2 opacity-0" : "translate-y-0 opacity-100"
         }`}
       >
