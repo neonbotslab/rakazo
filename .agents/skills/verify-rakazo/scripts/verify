@@ -1,0 +1,167 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+cd "$(git rev-parse --show-toplevel)"
+here=.agents/skills/verify-rakazo/scripts
+loopback=127.0.0.1
+
+report() {
+  local label=$1 status=0
+  shift
+  "$@" || status=$?
+  printf '%s exited %s\n' "$label" "$status"
+  return "$status"
+}
+
+request() {
+  curl --fail --silent --max-time 3 --noproxy '*' "$1"
+}
+
+doctor() {
+  local dir=$1 api_pid worker_pid web_pid api web
+  read -r api_pid worker_pid web_pid api web < "$dir/stack" &&
+    kill -0 "$api_pid" "$worker_pid" "$web_pid" &&
+    grep -q 'worker ready' "$dir/worker.log" &&
+    request "http://$loopback:$api/ready" >/dev/null &&
+    request "http://$loopback:$web/sign-in" >/dev/null &&
+    [[ $(request "http://$loopback:$web/api/auth/get-session") == null ]]
+}
+
+usage() {
+  printf 'Usage: %s [chat | serve | spec <web-e2e-spec> | doctor <run-dir>]\n' "$0" >&2
+  exit 2
+}
+
+mode=${1:-chat}
+case $mode in
+  doctor) [[ $# == 2 ]] || usage; report doctor doctor "$2"; exit ;;
+  spec) [[ $# == 2 && $2 == e2e/*.spec.ts && -f apps/web/$2 ]] || usage ;;
+  chat|serve) [[ $# -le 1 ]] || usage ;;
+  *) usage ;;
+esac
+
+if [[ ${RAKAZO_VERIFY_CLEAN_ENV:-} != 1 ]]; then
+  exec env -i PATH="$PATH" HOME="$HOME" LANG=C.UTF-8 RAKAZO_VERIFY_CLEAN_ENV=1 \
+    PLAYWRIGHT_BROWSERS_PATH="${PLAYWRIGHT_BROWSERS_PATH:-}" "$here/verify" "$@"
+fi
+
+for dir in . apps/web packages/db; do
+  for file in "$dir"/.env{,.local,.test,.test.local}; do
+    if [[ -e $file || -L $file ]]; then
+      printf 'Use a checkout without %s for offline verification.\n' "$file" >&2
+      exit 1
+    fi
+  done
+done
+
+export NODE_ENV=test RAKAZO_ENV_FILE=none
+report 'pnpm db:generate' pnpm db:generate
+
+pg_bin=$(pg_config --bindir)
+run_dir=$(mktemp -d /tmp/verify-rakazo.XXXXXXXX)
+pg_started=
+pids=()
+cleanup() {
+  local status=$? pid log
+  trap - EXIT
+  if ((status != 0)); then
+    for log in "$run_dir"/*.log; do
+      [[ -f $log ]] && tail -n 35 "$log" >&2
+    done
+  fi
+  for pid in "${pids[@]}"; do
+    kill -TERM -- "-$pid" 2>/dev/null || true
+  done
+  for pid in "${pids[@]}"; do
+    wait "$pid" 2>/dev/null || true
+  done
+  if [[ -n $pg_started ]]; then
+    report 'pg_ctl stop' "$pg_bin/pg_ctl" -D "$run_dir/db" -m fast -w stop || return 1
+  fi
+  report cleanup rm -rf -- "$run_dir"
+  exit "$status"
+}
+trap cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
+
+read -r db_port api_port web_port < <(node - "$loopback" <<'JS'
+const { createServer } = require("node:net");
+const servers = Array.from({ length: 3 }, () => createServer());
+Promise.all(servers.map((server) => new Promise((resolve, reject) => {
+  server.once("error", reject);
+  server.listen(0, process.argv[2], () => resolve(server.address().port));
+}))).then((ports) => {
+  console.log(ports.join(" "));
+  for (const server of servers) server.close();
+});
+JS
+)
+
+export DATABASE_MIGRATION_URL="postgresql://verify_owner@$loopback:$db_port/postgres"
+export DATABASE_URL="postgresql://verify_runtime:fixture-password@$loopback:$db_port/postgres"
+export REALTIME_DATABASE_URL="$DATABASE_URL" DATA_DIR="$run_dir/data"
+export API_HOST="$loopback" API_PORT="$api_port" API_URL="http://$loopback:$api_port"
+export WEB_PORT="$web_port" WEB_ORIGIN="http://$loopback:$web_port" RAKAZO_DEV_HOST="$loopback"
+export BETTER_AUTH_URL="$WEB_ORIGIN" API_PROXY_TARGET="$API_URL" PLAYWRIGHT_BASE_URL="$WEB_ORIGIN"
+export AGENT_RUNTIME=scripted SANDBOX_PROVIDER=fake RAKAZO_LIVE_MODEL_CATALOG=off
+export SIGNUPS_ENABLED=true VITE_DEFAULT_UI_LOCALE=en
+
+report initdb "$pg_bin/initdb" -D "$run_dir/db" -U verify_owner -A trust \
+  --no-locale --encoding=UTF8 > "$run_dir/initdb.log"
+tail -n 1 "$run_dir/initdb.log"
+report 'pg_ctl start' "$pg_bin/pg_ctl" -D "$run_dir/db" -l "$run_dir/postgres.log" \
+  -o "-h $loopback -p $db_port -k $run_dir" -w start
+pg_started=1
+report 'pnpm db:migrate' pnpm db:migrate > "$run_dir/migrate.log"
+tail -n 2 "$run_dir/migrate.log"
+
+start() {
+  local service=$1
+  shift
+  setsid "$@" > "$run_dir/$service.log" 2>&1 &
+  pids+=("$!")
+}
+start api node --import tsx apps/api/src/index.ts
+start worker node --import tsx apps/worker/src/index.ts
+start web pnpm --filter @rakazo/web dev --mode test
+printf '%s %s %s\n' "${pids[*]}" "$api_port" "$web_port" > "$run_dir/stack"
+printf 'Run directory %s\nWeb %s\n' "$run_dir" "$WEB_ORIGIN"
+
+deadline=$((SECONDS + 120))
+until doctor "$run_dir"; do
+  kill -0 "${pids[@]}" 2>/dev/null
+  if ((SECONDS >= deadline)); then
+    printf 'Stack readiness timed out.\n' >&2
+    exit 1
+  fi
+  sleep 1
+done
+report doctor doctor "$run_dir"
+
+if [[ $mode == serve ]]; then
+  wait -n "${pids[@]}"
+  exit
+fi
+
+exec 9>/tmp/rakazo-playwright.lock
+printf 'Waiting for the box browser lock.\n'
+flock 9
+while ps -eo comm=,stat=,args= | awk '
+  $2 !~ /^Z/ && ($1 ~ /^(chrome|chromium|electron|firefox)(-|$)|^WebKit/ ||
+    ($1 == "node" && $0 ~ /([\/]playwright(\/cli\.js)?|[ ]playwright)[ ]test/)) { busy = 1 }
+  END { exit !busy }
+'; do
+  sleep 2
+done
+
+case $mode in
+  chat) report chat "$here/chat.mjs" "$WEB_ORIGIN" "${run_dir##*.}" ;;
+  spec)
+    export CI= E2E_WORKERS=1 DATABASE_URL="$DATABASE_MIGRATION_URL"
+    spec_output="/tmp/verify-rakazo-spec-${run_dir##*.}"
+    printf 'Spec artifacts %s\n' "$spec_output"
+    report "$2" pnpm --filter @rakazo/web exec playwright test "$2" \
+      --workers=1 --reporter=list --output "$spec_output"
+    ;;
+esac
