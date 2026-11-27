@@ -156,31 +156,53 @@ it.each([
   [45_000, "45s"],
   [125_000, "2m05s"],
   [3_725_000, "1h02m05s"],
-])("collapses %d ms of reasoning under the reply and expands it on click", (durationMs, label) => {
-  const text = "Compare both schedules.";
+])(
+  "collapses %d ms of reasoning above the reply text and expands on click",
+  (durationMs, label) => {
+    const text = "Compare both schedules.";
+    const reply = textMessage("reply", "bot", "Tuesday is free.");
+    const reasoning = {
+      text,
+      durationMs,
+      startedAt: at(0),
+      endedAt: new Date(Date.parse(at(0)) + durationMs).toISOString(),
+    };
+    render({ ...baseProps([{ ...reply, reasoning }]), running: false });
+
+    const bubble = container.querySelector('[data-testid="message-bot-bubble"]')!;
+    const disclosure = [...bubble.querySelectorAll("button")].find(
+      (button) => button.textContent === `Thought for ${label}`,
+    );
+    expect(disclosure?.getAttribute("aria-expanded")).toBe("false");
+    expect(bubble.textContent).not.toContain(text);
+    expect(bubble.textContent!.indexOf(`Thought for ${label}`)).toBeLessThan(
+      bubble.textContent!.indexOf("Tuesday is free."),
+    );
+
+    act(() => disclosure?.click());
+    expect(disclosure?.getAttribute("aria-expanded")).toBe("true");
+    expect(bubble.textContent).toContain(text);
+  },
+);
+
+it("hides the reasoning disclosure when the reply has no readable reasoning", () => {
   const reply = textMessage("reply", "bot", "Tuesday is free.");
-  const reasoning = {
-    text,
-    durationMs,
-    startedAt: at(0),
-    endedAt: new Date(Date.parse(at(0)) + durationMs).toISOString(),
-  };
-  render({ ...baseProps([{ ...reply, reasoning }]), running: false });
-
-  const row = container.querySelector('[data-message-id="reply"]')!;
-  const disclosure = [...row.querySelectorAll("button")].find(
-    (button) => button.textContent === `Thought for ${label}`,
-  );
-  expect(disclosure).toBeDefined();
-  expect(disclosure?.getAttribute("aria-expanded")).toBe("false");
-  expect(row.textContent).not.toContain(text);
-  expect(row.textContent?.indexOf("Tuesday is free.")).toBeLessThan(
-    row.textContent!.indexOf(`Thought for ${label}`),
-  );
-
-  act(() => disclosure?.click());
-  expect(disclosure?.getAttribute("aria-expanded")).toBe("true");
-  expect(row.textContent).toContain(text);
+  render({
+    ...baseProps([
+      {
+        ...reply,
+        reasoning: {
+          text: " \n",
+          durationMs: 34_000,
+          startedAt: at(0),
+          endedAt: new Date(Date.parse(at(0)) + 34_000).toISOString(),
+        },
+      },
+    ]),
+    running: false,
+  });
+  expect(container.textContent).toContain("Tuesday is free.");
+  expect(container.textContent).not.toContain("Thought for");
 });
 
 it("places hosted tasks in the loaded transcript without remounting a task when history expands", () => {

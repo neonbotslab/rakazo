@@ -4,7 +4,7 @@ import { captureScreenshot } from "../helpers/helpers";
 const fixture = "/e2e/fixtures/live-reasoning.html";
 const text = "Compare the two calendars for Tuesday and Thursday.";
 
-test("reasoning replaces Thinking and can be reopened under the reply", async ({
+test("reasoning replaces Thinking and can be reopened above Done in the reply", async ({
   page,
 }, testInfo) => {
   await page.goto(`${fixture}?phase=waiting`);
@@ -26,13 +26,18 @@ test("reasoning replaces Thinking and can be reopened under the reply", async ({
       await page.goto(`${fixture}?phase=collapsed&theme=${theme}`);
       const reply = page.locator('[data-message-id="reply"]');
       await expect(reply.getByText("Tuesday afternoon works for both of you.")).toBeVisible();
-      const disclosure = reply.getByRole("button", { name: "Thought for 2m05s" });
+      const card = reply.getByTestId("message-bot-bubble");
+      const disclosure = card.getByRole("button", { name: "Thought for 2m05s" });
+      const summary = card.getByRole("button", { name: /Done.*2 tools/ });
+      await expect(summary).toBeVisible();
       await expect(disclosure).toHaveAttribute("aria-expanded", "false");
       await expect(reply.getByText(text)).toBeHidden();
       await captureScreenshot(page, testInfo, `collapsed-${viewport.name}-${theme}`);
 
       await disclosure.click();
       await expect(reply.getByText(text)).toBeVisible();
+      expect((await disclosure.boundingBox())!.y).toBeLessThan((await summary.boundingBox())!.y);
+      await captureScreenshot(page, testInfo, `expanded-${viewport.name}-${theme}`);
     }
   }
 });

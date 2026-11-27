@@ -19,7 +19,10 @@ if (
   setTimeout(() => writeFileSync(`${recordPath}.survived`, ""), 1_000);
   setInterval(() => {}, 1_000);
 } else if (args[0] === "--version") {
-  reply(scenario === "old-version" ? "2.0.1 (Claude Code)\n" : "2.1.311 (Claude Code)\n");
+  if (scenario === "unreported-version") reply("Claude Code (version unavailable)\n");
+  else if (scenario === "old-version") reply("2.0.1 (Claude Code)\n");
+  else if (scenario === "summary") reply("2.1.280 (Claude Code)\n");
+  else reply("2.1.311 (Claude Code)\n");
 } else if (args[0] === "auth") {
   // The real command also names the account; the bridge must read only `loggedIn`.
   const signedIn = scenario !== "signed-out";
@@ -27,6 +30,8 @@ if (
     `${JSON.stringify({ loggedIn: signedIn, authMethod: "claude.ai", email: "someone@example.com" })}\n`,
     signedIn ? 0 : 1,
   );
+} else if (scenario === "unreported-version" && args.includes("--thinking-display")) {
+  process.stderr.write("error: unknown option '--thinking-display'\n", () => process.exit(1));
 } else {
   await chat();
 }
@@ -126,7 +131,10 @@ async function chat() {
   switch (scenario) {
     case "slow-reply":
     case "late-error":
+    case "summary":
+    case "unreported-version":
     case "reply": {
+      const summary = args[args.indexOf("--thinking-display") + 1] === "summarized";
       stream({
         type: "message_start",
         message: { id: "msg_1", model: "claude-sonnet-5", usage },
@@ -135,7 +143,10 @@ async function chat() {
       stream({
         type: "content_block_delta",
         index: 0,
-        delta: { type: "thinking_delta", thinking: "Let me think." },
+        delta: {
+          type: "thinking_delta",
+          thinking: scenario !== "summary" || summary ? "Let me think." : "",
+        },
       });
       stream({
         type: "content_block_delta",

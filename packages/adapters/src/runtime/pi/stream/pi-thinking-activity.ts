@@ -9,10 +9,10 @@ export function withPiThinkingActivity(
 ): AssistantMessageEventStream {
   class ThinkingStream extends AssistantMessageEventStream {
     override async *[Symbol.asyncIterator](): AsyncGenerator<AssistantMessageEvent> {
-      let reasoningIndex: number | undefined;
+      let reasoning: { index: number; streamed: string } | undefined;
       const finish = (discard: boolean) => {
-        if (reasoningIndex === undefined) return;
-        reasoningIndex = undefined;
+        if (!reasoning) return;
+        reasoning = undefined;
         onReasoning?.(
           discard
             ? { type: "reasoning", phase: "discard" }
@@ -27,14 +27,24 @@ export function withPiThinkingActivity(
           if (onReasoning) {
             if (event.type === "thinking_start") {
               finish(false);
-              reasoningIndex = event.contentIndex;
+              reasoning = { index: event.contentIndex, streamed: "" };
               onReasoning({ type: "reasoning", phase: "start", at: Date.now() });
-            } else if (event.type === "thinking_delta") {
-              if (reasoningIndex === event.contentIndex) {
+            } else if (event.type === "thinking_delta" || event.type === "thinking_end") {
+              if (reasoning?.index === event.contentIndex) {
                 const block = event.partial.content[event.contentIndex];
-                if (block?.type === "thinking" && !block.redacted && event.delta) {
-                  onReasoning({ type: "reasoning", phase: "delta", text: event.delta });
+                const readable = block?.type === "thinking" && !block.redacted;
+                if (readable) {
+                  let text = "";
+                  if (event.type === "thinking_delta") text = event.delta;
+                  else if (event.content.startsWith(reasoning.streamed))
+                    text = event.content.slice(reasoning.streamed.length);
+                  else if (!reasoning.streamed.trim()) text = event.content;
+                  if (text) {
+                    reasoning.streamed += text;
+                    onReasoning({ type: "reasoning", phase: "delta", text });
+                  }
                 }
+                if (event.type === "thinking_end") finish(!readable);
               }
             } else {
               finish(event.type === "error");

@@ -14,7 +14,7 @@ import { isPeerReceiptBlocks, isToolActivityBlock, otherAuthor } from "@rakazo/c
 import { BotAvatar, Button, cn, resolvePersonaColorDef } from "@rakazo/ui-web";
 import { useQuery } from "@tanstack/react-query";
 import { UserRound } from "lucide-react";
-import { memo, useCallback, useMemo, useState } from "react";
+import { Fragment, memo, useCallback, useMemo, useState } from "react";
 import { CollaborationMarker } from "../../../components/ai/CollaborationMarker";
 import { ComputerCard } from "../../../components/computers/ComputerCard";
 import { ArtifactFileCard } from "../../../components/messages/ArtifactFileCard";
@@ -22,6 +22,7 @@ import { AskCard } from "../../../components/messages/AskCard";
 import { CloudAgentCard } from "../../../components/messages/CloudAgentCard";
 import { McpAppCard } from "../../../components/messages/McpAppCard";
 import { OutgoingDraftCard } from "../../../components/messages/OutgoingDraftCard";
+import { ReasoningDisclosure } from "../../../components/messages/ReasoningDisclosure";
 import { SubagentCard } from "../../../components/messages/SubagentCard";
 import {
   LIVE_TOOL_STEP_WINDOW,
@@ -287,6 +288,13 @@ export const MessageView = memo(function MessageView({
       onReact={onReact}
     />
   );
+  const reasoning = message.reasoning ? (
+    <ReasoningDisclosure reasoning={message.reasoning} />
+  ) : null;
+  const summaryIndex =
+    reasoning && showToolActivity
+      ? (isNarration ? visibleNarrationBlocks : blocks).findIndex((block) => block.kind === "steps")
+      : -1;
   if (isNarration) {
     if (visibleNarrationBlocks.length === 0) return null;
     if (isToolOnlyNarration(message.blocks, showToolActivity)) {
@@ -294,6 +302,7 @@ export const MessageView = memo(function MessageView({
         <>
           {messageContext}
           <div className="relative">
+            {reasoning}
             <ToolOnlyNarration
               blocks={visibleNarrationBlocks}
               live={isLive}
@@ -315,24 +324,27 @@ export const MessageView = memo(function MessageView({
               className="max-w-full space-y-2.5 rounded-2xl bg-muted px-4 py-2.5 text-body-lg text-foreground"
               dir="auto"
             >
+              {summaryIndex < 0 && reasoning}
               {visibleNarrationBlocks.map((block, i) => {
                 if (block.kind === "steps") {
                   return (
-                    <ToolActivityDisclosure
-                      key={i}
-                      live={isLive}
-                      stepCount={toolStepCount(block.steps)}
-                      durationMs={block.durationMs}
-                      onOpen={onOpenToolSteps}
-                    >
-                      <ToolSteps
-                        steps={block.steps}
-                        currentIndex={isLive ? block.steps.length - 1 : undefined}
-                        limit={isLive ? LIVE_TOOL_STEP_WINDOW : undefined}
-                        previews={previewsByBlock[i]}
+                    <Fragment key={i}>
+                      {i === summaryIndex && reasoning}
+                      <ToolActivityDisclosure
+                        live={isLive}
+                        stepCount={toolStepCount(block.steps)}
                         durationMs={block.durationMs}
-                      />
-                    </ToolActivityDisclosure>
+                        onOpen={onOpenToolSteps}
+                      >
+                        <ToolSteps
+                          steps={block.steps}
+                          currentIndex={isLive ? block.steps.length - 1 : undefined}
+                          limit={isLive ? LIVE_TOOL_STEP_WINDOW : undefined}
+                          previews={previewsByBlock[i]}
+                          durationMs={block.durationMs}
+                        />
+                      </ToolActivityDisclosure>
+                    </Fragment>
                   );
                 }
                 if (block.kind === "text" || block.kind === "progress") {
@@ -383,18 +395,21 @@ export const MessageView = memo(function MessageView({
           message.role === "user" && !peerReceipt && "items-end",
         )}
       >
+        {summaryIndex < 0 && reasoning}
         {blocks.map((block, i) => {
           if (block.kind === "steps" && shouldRenderToolCard(block, showToolActivity)) {
             return (
-              <StandaloneToolActivity
-                key={i}
-                live={isLive}
-                steps={block.steps}
-                stepCount={toolStepCount(block.steps)}
-                durationMs={block.durationMs}
-                previews={previewsByBlock[i]}
-                onOpen={onOpenToolSteps}
-              />
+              <Fragment key={i}>
+                {i === summaryIndex && reasoning}
+                <StandaloneToolActivity
+                  live={isLive}
+                  steps={block.steps}
+                  stepCount={toolStepCount(block.steps)}
+                  durationMs={block.durationMs}
+                  previews={previewsByBlock[i]}
+                  onOpen={onOpenToolSteps}
+                />
+              </Fragment>
             );
           }
           if (isToolActivityBlock(block)) return null;

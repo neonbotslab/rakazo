@@ -207,6 +207,24 @@ describe.skipIf(process.platform === "win32")("Claude Code CLI provider", () => 
     expect(record.tools.call).toMatchObject({ isError: true });
   });
 
+  it("requests summarized reasoning on the minimum supported CLI", async () => {
+    const cli = fakeClaude("summary");
+    const { events } = await run(hello);
+    expect(events).toContainEqual(
+      expect.objectContaining({ type: "thinking_delta", delta: "Let me think." }),
+    );
+    const { args } = cli.read();
+    expect(args[args.indexOf("--thinking-display") + 1]).toBe("summarized");
+  });
+
+  it("still replies when the CLI version is unreported and the summary flag is unsupported", async () => {
+    const cli = fakeClaude("unreported-version");
+    const { message } = await run(hello);
+    expect(message.errorMessage).toBeUndefined();
+    expect(message.stopReason).toBe("stop");
+    expect(cli.read().args).not.toContain("--thinking-display");
+  });
+
   it("admits and forwards image input outside a runtime scope", async () => {
     vi.stubEnv("PI_DEFAULT_PROVIDER", "openrouter");
     expect(scopedRuntimeModels()).toBeUndefined();

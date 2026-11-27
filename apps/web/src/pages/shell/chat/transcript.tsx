@@ -44,7 +44,6 @@ import {
 import { ActiveBotGlyph } from "../../../components/ai/CollaborationMarker";
 import { VoiceChatCard } from "../../../components/call/VoiceChatCard";
 import { HostPluginTaskCardView } from "../../../components/messages/HostPluginTaskCard";
-import { ReasoningDisclosure } from "../../../components/messages/ReasoningDisclosure";
 import {
   isDetachedRange,
   lastSelectedText,
@@ -850,9 +849,6 @@ export const Transcript = memo(function Transcript({
                         onMarkUnread={onMarkUnread}
                         onReact={onReact}
                       />
-                      {message.reasoning ? (
-                        <ReasoningDisclosure reasoning={message.reasoning} />
-                      ) : null}
                     </div>
                   </div>
                   {!peerReceipt && messageReactions ? (

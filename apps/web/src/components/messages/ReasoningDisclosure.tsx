@@ -15,6 +15,7 @@ function formatReasoningDuration(durationMs: number): string {
 
 export function ReasoningDisclosure({ reasoning }: { reasoning: ReplyReasoning }) {
   const { t } = useLingui();
+  if (!reasoning.text.trim()) return null;
   const duration = formatReasoningDuration(reasoning.durationMs);
   return (
     <Collapsible className="mt-1 min-w-0 text-muted-foreground">

@@ -92,7 +92,7 @@ describe("consumeRunEvents and Stop", () => {
     vi.useRealTimers();
   });
 
-  it("coalesces readable reasoning and redacts a credential split across deltas", async () => {
+  it("streams a saved secret in reasoning across deltas", async () => {
     const { ctx: base } = await context({ status: "running" });
     const ctx = { ...base, scripted: false, secrets: ["fixture-credential"] };
     const append = vi.mocked(ctx.deps.events.append);
@@ -104,6 +104,14 @@ describe("consumeRunEvents and Stop", () => {
         phase: "delta",
         text: "Plan the next step carefully. fixture-cre",
       };
+      expect(append).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          payload: {
+            reasoningChanged: true,
+            reasoning: "Plan the next step carefully. fixture-cre",
+          },
+        }),
+      );
       yield { type: "reasoning", phase: "delta", text: "dential. Check the schedule." };
       expect(append).toHaveBeenCalledTimes(1);
       vi.setSystemTime(start + 1_000);
@@ -114,11 +122,12 @@ describe("consumeRunEvents and Stop", () => {
 
     const payloads = append.mock.calls.map(([event]) => event.payload);
     expect(payloads.map((payload) => payload.reasoningChanged)).toEqual([true, true, true]);
-    expect(payloads[1]?.reasoning).toContain("[redacted]");
+    const text =
+      "Plan the next step carefully. fixture-credential. Check the schedule. Then compare the calendars.";
+    expect(payloads[1]?.reasoning).toBe(text);
     expect(payloads[2]?.reasoning).toBeNull();
-    expect(JSON.stringify(payloads)).not.toContain("fixture-cre");
     expect(ctx.state.reply.reasoning).toEqual({
-      text: "Plan the next step carefully. [redacted]. Check the schedule. Then compare the calendars.",
+      text,
       startedAt: new Date(start).toISOString(),
       endedAt: new Date(start + 1_500).toISOString(),
       durationMs: 1_500,
@@ -139,6 +148,45 @@ describe("consumeRunEvents and Stop", () => {
     const expected = `a${"🙂".repeat(4_095)}`;
     expect(vi.mocked(ctx.deps.events.append).mock.calls[0]?.[0].payload.reasoning).toBe(expected);
     expect(ctx.state.reply.reasoning?.text).toBe(expected);
+  });
+
+  it("publishes reasoning before the phase ends even with a long credential to protect", async () => {
+    const { ctx: base } = await context({ status: "running" });
+    const ctx = { ...base, scripted: false, secrets: [`fixture-${"x".repeat(4_500)}`] };
+    const text = "Compare both schedules.";
+    const at = Date.now();
+    async function* runtime(): AsyncIterable<AgentRuntimeEvent> {
+      yield { type: "reasoning", phase: "start", at };
+      yield { type: "reasoning", phase: "delta", text };
+      expect(ctx.deps.events.append).toHaveBeenCalledWith(
+        expect.objectContaining({ payload: { reasoningChanged: true, reasoning: text } }),
+      );
+      yield { type: "reasoning", phase: "end", at: at + 34_000 };
+    }
+    await consumeRunEvents(ctx, runtime());
+    expect(ctx.state.reply.reasoning).toMatchObject({ text, durationMs: 34_000 });
+  });
+
+  it("keeps the finished reasoning readable while the reply is still pending", async () => {
+    const { ctx: base } = await context({ status: "running" });
+    const ctx = { ...base, scripted: false };
+    const at = Date.now();
+    async function* runtime(): AsyncIterable<AgentRuntimeEvent> {
+      yield { type: "reasoning", phase: "start", at };
+      yield { type: "reasoning", phase: "delta", text: "Compare dates." };
+      yield { type: "reasoning", phase: "delta", text: " Tuesday works." };
+      yield { type: "reasoning", phase: "end", at: at + 200 };
+      expect(ctx.deps.events.append).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          payload: { reasoningChanged: true, reasoning: "Compare dates. Tuesday works." },
+        }),
+      );
+      yield { type: "done", text: "Tuesday works." };
+    }
+    await consumeRunEvents(ctx, runtime());
+    expect(ctx.deps.events.append).toHaveBeenLastCalledWith(
+      expect.objectContaining({ payload: { reasoningChanged: true, reasoning: null } }),
+    );
   });
 
   it("aborts a quiet model call within two seconds of Stop", async () => {

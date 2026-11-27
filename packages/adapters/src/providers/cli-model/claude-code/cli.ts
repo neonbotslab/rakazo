@@ -288,14 +288,15 @@ const ready = new Map<string, number>();
  * Checks that the CLI is installed, new enough, and signed in. Only `loggedIn` is read from
  * `claude auth status`; the account details it prints are ignored. A probe that times out or
  * prints something unexpected does not block the request: the CLI then reports its own error.
+ * Returns whether the installed version meets the minimum.
  */
-export async function checkClaudeCode(cwd: string, signal?: AbortSignal): Promise<void> {
+export async function checkClaudeCode(cwd: string, signal?: AbortSignal): Promise<boolean> {
   signal?.throwIfAborted();
   const env = claudeCodeEnv();
   // A different PATH, home or config directory can mean a different CLI or sign-in.
   const key = JSON.stringify(env);
   const checkedAt = ready.get(key);
-  if (checkedAt !== undefined && Date.now() - checkedAt < READY_CACHE_MS) return;
+  if (checkedAt !== undefined && Date.now() - checkedAt < READY_CACHE_MS) return true;
   const version = await capture(["--version"], cwd, signal);
   if (version.missing) throw new Error(CLAUDE_CODE_NOT_INSTALLED_ERROR);
   const installed = /(\d+\.\d+\.\d+)/.exec(version.stdout)?.[1];
@@ -314,4 +315,5 @@ export async function checkClaudeCode(cwd: string, signal?: AbortSignal): Promis
   }
   if (loggedIn === false) throw new Error(CLAUDE_CODE_SIGNED_OUT_ERROR);
   if (loggedIn === true && installed) ready.set(key, Date.now());
+  return installed !== undefined;
 }

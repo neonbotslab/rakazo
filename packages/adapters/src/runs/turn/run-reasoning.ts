@@ -1,27 +1,22 @@
 import type { AgentRuntimeEvent } from "@rakazo/adapter-kit";
 import type { ReplyReasoning } from "@rakazo/contracts";
 import { MAX_REPLY_REASONING_BYTES } from "@rakazo/contracts";
-import { byteLength, createStreamingRedactor, redactSecrets, truncateUtf8 } from "@rakazo/core";
+import { byteLength, createStreamingRedactor, truncateUtf8 } from "@rakazo/core";
 import { RunHistoryWriteError } from "@rakazo/db";
-import { sanitizeSensitiveText } from "../../runtime/pi/pi-runtime-errors.js";
 import type { RunContext } from "../assembly/run-context.js";
 import { holdsTransientProgress } from "../lifecycle/run-progress.js";
 
 const PUBLISH_INTERVAL_MS = 1_000;
 type ReasoningEvent = Extract<AgentRuntimeEvent, { type: "reasoning" }>;
 
-function displayText(
-  text: string,
-  secrets: string[],
-  maxBytes = MAX_REPLY_REASONING_BYTES,
-): string {
-  return truncateUtf8(sanitizeSensitiveText(redactSecrets(text, secrets)), maxBytes).trim();
+function displayText(text: string, maxBytes = MAX_REPLY_REASONING_BYTES): string {
+  return truncateUtf8(text, maxBytes).trim();
 }
 
 export function completedRunReasoning(ctx: RunContext): ReplyReasoning | undefined {
   const reasoning = ctx.state.reply.reasoning;
   if (!reasoning) return;
-  const text = displayText(reasoning.text, ctx.secrets);
+  const text = displayText(reasoning.text);
   if (text) return { ...reasoning, text };
 }
 
@@ -37,12 +32,12 @@ export function createRunReasoning(ctx: RunContext) {
   let phase:
     | {
         startedAt: number;
+        lastUpdateAt: number;
         text: string;
         capped: boolean;
-        redactor: ReturnType<typeof createStreamingRedactor>;
+        utf16: ReturnType<typeof createStreamingRedactor>;
       }
     | undefined;
-  let lastUpdate = Number.NEGATIVE_INFINITY;
   let published: string | null = null;
   const remainingBytes = () =>
     MAX_REPLY_REASONING_BYTES - (reply.reasoning ? byteLength(reply.reasoning.text) + 2 : 0);
@@ -84,25 +79,28 @@ export function createRunReasoning(ctx: RunContext) {
       if (event.phase === "start") {
         phase = {
           startedAt: event.at,
+          lastUpdateAt: Number.NEGATIVE_INFINITY,
           text: "",
           capped: false,
-          redactor: createStreamingRedactor(ctx.secrets),
+          // The empty matcher still joins split surrogate pairs and replaces invalid UTF-16.
+          utf16: createStreamingRedactor([]),
         };
+        await publish(null);
       } else if (event.phase === "discard") {
         await discard();
       } else if (phase && event.phase === "delta") {
-        if (!phase.capped) append(phase.redactor.push(event.text));
+        if (!phase.capped) append(phase.utf16.push(event.text));
         const now = Date.now();
-        if (phase.text && now - lastUpdate >= PUBLISH_INTERVAL_MS) {
-          const text = displayText(phase.text, ctx.secrets, remainingBytes());
+        if (phase.text && now - phase.lastUpdateAt >= PUBLISH_INTERVAL_MS) {
+          const text = displayText(phase.text, remainingBytes());
           if (text && text !== published) {
-            lastUpdate = now;
+            phase.lastUpdateAt = now;
             await publish(text);
           }
         }
       } else if (phase && event.phase === "end") {
-        if (!phase.capped) append(phase.redactor.finish());
-        const text = displayText(phase.text, ctx.secrets, remainingBytes());
+        if (!phase.capped) append(phase.utf16.finish());
+        const text = displayText(phase.text, remainingBytes());
         if (text) {
           const previous = reply.reasoning;
           const endedAt = Math.max(phase.startedAt, event.at);
@@ -113,7 +111,8 @@ export function createRunReasoning(ctx: RunContext) {
             durationMs: (previous?.durationMs ?? 0) + endedAt - phase.startedAt,
           };
         }
-        await discard();
+        phase = undefined;
+        if (text) await publish(text);
       }
     },
   };

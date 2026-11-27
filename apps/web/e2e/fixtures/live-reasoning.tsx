@@ -38,7 +38,14 @@ if (phase === "collapsed") {
       payload: {
         messageId: "reply",
         role: "bot",
-        blocks: [{ kind: "text", text: "Tuesday afternoon works for both of you." }],
+        blocks: [
+          {
+            kind: "steps",
+            steps: [{ label: "Check calendars", count: 2, outcomes: { succeeded: 2 } }],
+            durationMs: 126_000,
+          },
+          { kind: "text", text: "Tuesday afternoon works for both of you." },
+        ],
         reasoning,
       },
     },
@@ -54,7 +61,7 @@ void bootstrapI18n("en").then(() => {
         messages={snapshot.messages}
         running={snapshot.run?.status === "running"}
         liveReasoning={snapshot.liveReasoning}
-        showToolActivity={false}
+        showToolActivity
       />
     </I18nProvider>,
   );
