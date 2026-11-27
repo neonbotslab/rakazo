@@ -98,13 +98,13 @@ test("matches the timeline states across widths and themes", async ({ page }, te
         await expect(summary).toHaveAttribute("aria-expanded", "false");
         if (state !== "finished-closed") await summary.click();
         if (state === "long") {
-          await expect(trace.getByText("Checked Alex's calendar", { exact: true })).toBeVisible();
+          await expect(trace.getByText("Checked Alex’s calendar", { exact: true })).toBeVisible();
           await expect(
-            trace.getByText("Checked Alex's calendar for Wednesday ×2", { exact: true }),
+            trace.getByText("Checked Alex’s calendar for Wednesday ×2", { exact: true }),
           ).toBeVisible();
         }
         if (state === "tool-open") {
-          const alex = trace.getByRole("button", { name: /^Checked Alex's calendar/ });
+          const alex = trace.getByRole("button", { name: /^Checked Alex’s calendar/ });
           const dana = trace.getByRole("button", { name: /^Checked Dana/ });
           expect((await dana.boundingBox())!.y - (await alex.boundingBox())!.y).toBe(56);
           await dana.click();

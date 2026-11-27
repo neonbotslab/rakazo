@@ -77,7 +77,7 @@ function useToolLabel(call: TraceCall, subject?: string) {
     if (outcome === "running") return t`Checking ${subject}’s calendar`;
     if (outcome === "failed") return t`Couldn't reach ${subject}’s calendar`;
     if (outcome === "stopped") return t`Stopped checking ${subject}’s calendar`;
-    return t`Checked ${subject}'s calendar`;
+    return t`Checked ${subject}’s calendar`;
   }
   const name = readableName(call.label);
   if (outcome === "stopped") return t`Stopped ${name}`;

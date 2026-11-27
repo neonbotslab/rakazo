@@ -46,10 +46,10 @@ const long = thought(
   ].join("\n\n"),
 );
 
-const mine = tool("primary", "Checked Alex's calendar", 1_400);
+const mine = tool("primary", "Checked Alex’s calendar", 1_400);
 const dana = tool("dana", "Checked Dana’s calendar", 1_200);
 const wednesday = tool("wednesday", "Checked Dana’s calendar for Wednesday", 900);
-const repeated = tool("repeated", "Checked Alex's calendar for Wednesday", 800);
+const repeated = tool("repeated", "Checked Alex’s calendar for Wednesday", 800);
 const repeat = tool("repeat", repeated.label, 700, { groupId: repeated.id });
 const failed = tool("failed", "Couldn’t reach Dana’s calendar", 5_000, { outcome: "failed" });
 const working = tool("active", "Checking Dana’s calendar", undefined, {

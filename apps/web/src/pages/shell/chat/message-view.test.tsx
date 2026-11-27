@@ -215,7 +215,7 @@ it("names the calendar subject from the call's Asked details", async () => {
     await flush();
   });
   expect(trace.textContent).toContain("Alex");
-  expect(call.textContent).toBe("Checked Alex's calendar");
+  expect(call.textContent).toBe("Checked Alex’s calendar");
 });
 
 it("names both calls in an open repeat group before either subcall is opened", async () => {
