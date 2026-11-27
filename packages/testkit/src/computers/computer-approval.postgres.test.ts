@@ -3,6 +3,10 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { ComposioConnector, FakeComposioClient, FakeSandboxProvider } from "@rakazo/adapters";
+import type { AppHandles, createApp as CreateApp } from "@rakazo/api/app";
+import { deferred } from "@rakazo/core/test-async";
+import { storedMessageBlocks } from "@rakazo/db";
+import { createLogger, createTestSink, getLogger, installLogger } from "@rakazo/logging";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { discardBotIntroRun } from "../discard-bot-intro.js";
 import { sessionCookieHeader } from "../index.js";
@@ -13,6 +17,7 @@ import { asSystem } from "../system-db.js";
 type App = { request: (input: string, init?: RequestInit) => Response | Promise<Response> };
 const databaseAvailable = process.env.VERIFY_DATABASE === "1" && Boolean(process.env.DATABASE_URL);
 const fixtureOrigin = "http://127.0.0.1:5173";
+const fixtureKey = "offline-computer-approval-key";
 
 describe.skipIf(!databaseAvailable)("offline Pi computer approval", () => {
   beforeEach(() => {
@@ -45,7 +50,6 @@ describe.skipIf(!databaseAvailable)("offline Pi computer approval", () => {
           if (answer === "allow") expect(screens).toContain("approved clipboard content");
           else expect(screens).not.toContain("approved clipboard content");
         };
-      const fixtureKey = "offline-computer-approval-key";
       const model = await startModelEmulator({
         apiKey: fixtureKey,
         steps: [
@@ -74,68 +78,13 @@ describe.skipIf(!databaseAvailable)("offline Pi computer approval", () => {
       const dataDir = await mkdtemp(path.join(tmpdir(), "rakazo-computer-approval-"));
       let stop: (() => Promise<void>) | undefined;
       try {
-        const { createApp } = await import("@rakazo/api/app");
-        const handles = await createApp({
-          databaseUrl: process.env.DATABASE_URL!,
-          realtimeDatabaseUrl: process.env.DATABASE_URL!,
-          authUrl: fixtureOrigin,
-          webOrigin: fixtureOrigin,
-          dataDir,
-          sandboxProvider: "fake",
-          agentRuntime: "pi",
-          wakeupDriver: "memory",
-          signupsEnabled: "true",
-          composio: new ComposioConnector({ client: new FakeComposioClient() }),
-          encryptionKey: "offline-computer-fixture-encryption-key",
-        });
+        const handles = await createApprovalApp(dataDir);
         stop = handles.stop;
-        const db = asSystem(handles.prisma);
-        expect(handles.sandbox).toBeInstanceOf(FakeSandboxProvider);
-        sandbox = handles.sandbox as FakeSandboxProvider;
-        // Keep the real fake-provider implementation; observe calls and its state
-        // independently of the model's claims and the persisted effect record.
+        const { db, bot, cookie } = await configureApprovalBot(handles, model);
+        if (!(handles.sandbox instanceof FakeSandboxProvider))
+          throw new Error("Expected a fake sandbox");
+        sandbox = handles.sandbox;
         const act = vi.spyOn(sandbox, "act");
-        const signup = await handles.app.request("/api/auth/sign-up/email", {
-          method: "POST",
-          headers: { "content-type": "application/json", origin: fixtureOrigin },
-          body: JSON.stringify({
-            email: `computer-approval-${randomUUID()}@rakazo.test`,
-            password: "password12",
-            name: "Computer approval fixture",
-          }),
-        });
-        expect(signup.status).toBeLessThan(400);
-        const cookie = sessionCookieHeader(signup);
-        await rpc(handles.app, cookie, "models/connect", {
-          provider: model.model.provider,
-          modelId: model.model.id,
-          baseUrl: model.baseUrl,
-          apiKey: fixtureKey,
-          contextWindow: 160_000,
-          maxTokens: 4096,
-        });
-        const bot = await rpc<{ id: string }>(handles.app, cookie, "bots/create", {
-          name: "Computer fixture",
-          title: "",
-          description: "",
-          instructions: "Complete the computer task.",
-          notifyOnFinish: false,
-        });
-        await discardBotIntroRun(handles, cookie, bot.id);
-        await rpc(handles.app, cookie, "bots/update", {
-          botId: bot.id,
-          modelProvider: model.model.provider,
-          modelId: model.model.id,
-        });
-        const storedBot = await db.bot.findUniqueOrThrow({ where: { id: bot.id } });
-        await db.userActionApprovalRule.create({
-          data: {
-            userId: storedBot.userId,
-            effect: "require_approval",
-            matchKind: "tool",
-            matchValue: "computer_act",
-          },
-        });
         const sent = await rpc<{ runId: string }>(handles.app, cookie, "threads/send", {
           botId: bot.id,
           text: "Put approved clipboard content on the computer clipboard.",
@@ -216,7 +165,233 @@ describe.skipIf(!databaseAvailable)("offline Pi computer approval", () => {
     },
     45_000,
   );
+
+  it("keeps each approval pending when another webhook arrives during the turn", async () => {
+    const approvals = ["first", "second"].map((name) => {
+      const requested = deferred();
+      const release = deferred();
+      const step: ModelEmulatorStep = {
+        async expect() {
+          requested.resolve();
+          await release.promise;
+        },
+        response: {
+          type: "tool",
+          id: `approval-${name}`,
+          name: "computer_act",
+          arguments: {
+            actions: [{ kind: "type", text: `Clipboard ${name}` }],
+            observe: false,
+            settle_ms: 0,
+          },
+        },
+      };
+      return { requested, release, step };
+    });
+    const followup: ModelEmulatorStep = {
+      expect() {},
+      response: { type: "text", text: "Handled the other webhook." },
+    };
+    const model = await startModelEmulator({
+      apiKey: fixtureKey,
+      steps: [
+        ...approvals.flatMap(({ step }) => [step, followup]),
+        { expect() {}, response: { type: "text", text: "Finished both approvals." } },
+      ],
+    });
+    const dataDir = await mkdtemp(path.join(tmpdir(), "rakazo-webhook-approval-"));
+    const previousLogger = getLogger();
+    const sink = createTestSink();
+    let stop: AppHandles["stop"] | undefined;
+    try {
+      const handles = await createApprovalApp(dataDir, {
+        wakeupDriver: "graphile",
+        logger: createLogger({ service: "approval-test", level: "info", sinks: [sink] }),
+      });
+      stop = handles.stop;
+      const { db, bot, cookie } = await configureApprovalBot(handles, model);
+      if (!(handles.sandbox instanceof FakeSandboxProvider))
+        throw new Error("Expected a fake sandbox");
+      const act = vi.spyOn(handles.sandbox, "act");
+      await db.routine.create({
+        data: {
+          botId: bot.id,
+          spaceId: bot.spaceId,
+          userId: bot.userId,
+          name: "Webhook fixture",
+          prompt: "Handle the webhook.",
+          crons: [],
+          active: true,
+          webhookEnabled: true,
+        },
+      });
+      const webhook = await rpc<{ secret: string; path: string }>(
+        handles.app,
+        cookie,
+        "bots/rotateWebhookSecret",
+        { botId: bot.id },
+      );
+      const deliver = async (event: string) => {
+        const response = await handles.app.request(webhook.path, {
+          method: "POST",
+          headers: {
+            authorization: `Bearer ${webhook.secret}`,
+            "content-type": "application/json",
+          },
+          body: JSON.stringify({ event }),
+        });
+        expect(response.status).toBe(200);
+        return response.json() as Promise<{ runId: string; messageId: string }>;
+      };
+      const { runId } = await deliver("original");
+      const completedJobs = (id: string) =>
+        sink.events.filter(
+          (event) =>
+            event.message === "job.completed" &&
+            event["job.type"] === "run.continue" &&
+            event["run.id"] === id,
+        ).length;
+      for (const [index, { requested, release }] of approvals.entries()) {
+        await requested.promise;
+        const held = await deliver(`held-${index}`);
+        expect(held.runId).toBe(runId);
+        release.resolve();
+        await vi.waitFor(
+          async () => {
+            const followupRun = await db.run.findFirst({
+              where: { sourceMessageId: held.messageId, trigger: "webhook" },
+            });
+            expect(followupRun?.status).toBe("completed");
+            expect(completedJobs(followupRun!.id)).toBeGreaterThan(0);
+            expect(completedJobs(runId)).toBeGreaterThan(index);
+          },
+          { timeout: 10_000 },
+        );
+        const cards = (
+          await db.message.findMany({
+            where: { runId, role: "bot" },
+            orderBy: { seq: "asc" },
+          })
+        ).flatMap((message) =>
+          storedMessageBlocks(message).flatMap((block) =>
+            block.kind === "ask" && block.approvalEffectId
+              ? [{ messageId: message.id, status: block.status }]
+              : [],
+          ),
+        );
+        expect
+          .soft(cards.map((card) => card.status))
+          .toEqual(index === 0 ? ["pending"] : ["answered", "pending"]);
+        expect.soft(completedJobs(runId)).toBe(index + 1);
+        expect.soft(await db.attempt.count({ where: { runId } })).toBe(index + 1);
+        const run = await db.run.findUniqueOrThrow({ where: { id: runId } });
+        expect(run).toMatchObject({
+          status: "waiting_input",
+          leaseOwner: null,
+          leaseExpiresAt: null,
+        });
+        expect(act).toHaveBeenCalledTimes(index);
+        await rpc(handles.app, cookie, "threads/answer", {
+          botId: bot.id,
+          runId,
+          messageId: cards.at(-1)!.messageId,
+          answer: "allow",
+        });
+      }
+      await vi.waitFor(
+        async () => {
+          expect((await db.run.findUniqueOrThrow({ where: { id: runId } })).status).toBe(
+            "completed",
+          );
+          expect(completedJobs(runId)).toBeGreaterThanOrEqual(3);
+        },
+        { timeout: 10_000 },
+      );
+      expect.soft(completedJobs(runId)).toBe(3);
+      expect(act).toHaveBeenCalledTimes(2);
+      model.assertComplete();
+    } finally {
+      for (const { release } of approvals) release.resolve();
+      try {
+        await stop?.();
+      } finally {
+        installLogger(previousLogger);
+        await model.close();
+        await rm(dataDir, { recursive: true, force: true });
+      }
+    }
+  }, 45_000);
 });
+
+async function createApprovalApp(
+  dataDir: string,
+  options: Pick<NonNullable<Parameters<typeof CreateApp>[0]>, "wakeupDriver" | "logger"> = {},
+) {
+  const { createApp } = await import("@rakazo/api/app");
+  return createApp({
+    databaseUrl: process.env.DATABASE_URL!,
+    realtimeDatabaseUrl: process.env.DATABASE_URL!,
+    authUrl: fixtureOrigin,
+    webOrigin: fixtureOrigin,
+    dataDir,
+    sandboxProvider: "fake",
+    agentRuntime: "pi",
+    wakeupDriver: "memory",
+    signupsEnabled: "true",
+    composio: new ComposioConnector({ client: new FakeComposioClient() }),
+    encryptionKey: "offline-computer-fixture-encryption-key",
+    ...options,
+  });
+}
+
+async function configureApprovalBot(
+  handles: AppHandles,
+  model: Awaited<ReturnType<typeof startModelEmulator>>,
+) {
+  const db = asSystem(handles.prisma);
+  const signup = await handles.app.request("/api/auth/sign-up/email", {
+    method: "POST",
+    headers: { "content-type": "application/json", origin: fixtureOrigin },
+    body: JSON.stringify({
+      email: `computer-approval-${randomUUID()}@rakazo.test`,
+      password: "password12",
+      name: "Computer approval fixture",
+    }),
+  });
+  expect(signup.status).toBeLessThan(400);
+  const cookie = sessionCookieHeader(signup);
+  await rpc(handles.app, cookie, "models/connect", {
+    provider: model.model.provider,
+    modelId: model.model.id,
+    baseUrl: model.baseUrl,
+    apiKey: fixtureKey,
+    contextWindow: 160_000,
+    maxTokens: 4096,
+  });
+  const { id } = await rpc<{ id: string }>(handles.app, cookie, "bots/create", {
+    name: "Computer fixture",
+    title: "",
+    description: "",
+    instructions: "Complete the computer task.",
+    notifyOnFinish: false,
+  });
+  await discardBotIntroRun(handles, cookie, id);
+  await rpc(handles.app, cookie, "bots/update", {
+    botId: id,
+    modelProvider: model.model.provider,
+    modelId: model.model.id,
+  });
+  const bot = await db.bot.findUniqueOrThrow({ where: { id } });
+  await db.userActionApprovalRule.create({
+    data: {
+      userId: bot.userId,
+      effect: "require_approval",
+      matchKind: "tool",
+      matchValue: "computer_act",
+    },
+  });
+  return { db, bot, cookie };
+}
 
 async function rpc<T>(
   app: App,
