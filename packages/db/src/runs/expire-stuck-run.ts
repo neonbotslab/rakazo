@@ -137,7 +137,7 @@ export async function expireStuckRun(
     botId: run.botId,
     type: "run.cancelled",
     runId: input.runId,
-    payload: {},
+    payload: { noticeKind: "expired" },
   });
   await tx.event.deleteMany({
     where: { runId: input.runId, ...transientRunEventsWhere() },

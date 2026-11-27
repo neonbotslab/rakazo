@@ -1,5 +1,5 @@
 import type { NotificationMessage } from "@rakazo/adapter-kit";
-import type { MessageBlock } from "@rakazo/contracts";
+import type { MessageBlock, PluginNoticeKind } from "@rakazo/contracts";
 import {
   BACKGROUND_HELPER_TRIGGER,
   displayName,
@@ -71,7 +71,7 @@ export async function notifyRun(
     sourceMessageId?: string | null;
   },
   message: NotificationMessage,
-  options: { retryOnFailure?: boolean } = {},
+  options: { retryOnFailure?: boolean; noticeKind?: PluginNoticeKind } = {},
 ) {
   if (
     (!deps.notifications && !deps.events.publishChatAlert) ||
@@ -111,6 +111,7 @@ export async function notifyRun(
     groupId: notice.groupId,
     bot: notice.bot,
     retryOnFailure: options.retryOnFailure,
+    noticeKind: options.noticeKind,
   });
 }
 
@@ -165,6 +166,7 @@ export async function notifyMemberMessage(
       threadId: input.threadId,
     },
     groupId: thread.groupId,
+    noticeKind: "memberMessage",
     bot: thread.groupId ? undefined : (thread.bot ?? undefined),
   });
 }
@@ -188,6 +190,7 @@ async function deliverChatNotice(
     groupId: string | null;
     bot?: { id: string; name: string; color: string; avatarSet: string };
     retryOnFailure?: boolean;
+    noticeKind?: PluginNoticeKind;
   },
 ) {
   const { spaceId, message, groupId, bot } = input;
@@ -204,7 +207,7 @@ async function deliverChatNotice(
       : new Set<string>();
   const recipients = input.recipients.filter((userId) => !snoozing.has(userId));
   for (const userId of recipients) {
-    publishChatAlert(deps.events, { spaceId, userId }, message, groupId);
+    publishChatAlert(deps.events, { spaceId, userId }, message, groupId, input.noticeKind);
   }
   const notifications = deps.notifications;
   if (!notifications || !recipients.length) return;
@@ -251,16 +254,25 @@ async function deliverChatNotice(
   if (failed && input.retryOnFailure) throw failed.error;
 }
 
+const noticeKinds: Record<NotificationMessage["kind"], PluginNoticeKind> = {
+  completion: "reply",
+  help: "question",
+  failure: "failure",
+  takeover: "takeover",
+};
+
 /** Open apps alert from the same message. Not awaited, so it never holds up the push. */
 export function publishChatAlert(
   events: Pick<ThreadEvents, "publishChatAlert"> | undefined,
   run: { spaceId: string; userId: string },
   message: NotificationMessage,
   groupId: string | null,
+  noticeKind: PluginNoticeKind = noticeKinds[message.kind],
 ) {
   void (async () =>
     events?.publishChatAlert?.(run.userId, {
       kind: message.kind,
+      noticeKind,
       title: truncatePlainText(message.title, COMPLETION_NOTIFICATION_MAX_CHARS),
       body: truncatePlainText(message.body, COMPLETION_NOTIFICATION_MAX_CHARS),
       spaceId: run.spaceId,

@@ -719,6 +719,7 @@ model Space {
   events                      Event[]
   tasks                       Task[]
   runs                        Run[]
+  runTerminalEvents           RunTerminalEvent[]
   routines                    Routine[]
   scratchpadItems             ScratchpadItem[]
   botEmailMessages            BotEmailMessage[]
@@ -1399,6 +1400,23 @@ model Run {
   // Partial index runs_helper_outcome_pending_idx (unreturned background-helper outcomes) is created in SQL.
   @@index([routineId, createdAt])
   @@map("runs")
+}
+
+model RunTerminalEvent {
+  runId              String    @id
+  spaceId            String
+  space              Space     @relation(fields: [spaceId], references: [id], onDelete: Cascade)
+  userId             String
+  threadId           String
+  botId              String
+  status             String
+  finishedAt         DateTime
+  deliveredPluginIds String[]  @default([])
+  dispatchedAt       DateTime?
+
+  @@index([spaceId])
+  // The partial run_terminal_events_pending_idx is created in SQL.
+  @@map("run_terminal_events")
 }
 
 model SteeringMessage {

@@ -58,6 +58,7 @@ import type { MessagingDelivery } from "../../messaging/messaging-delivery.js";
 import type { TeamChat } from "../../messaging/team-chat/team-chat.js";
 import type { ExpoPushProvider } from "../../notifications/expo-push.js";
 import { pollPurchase } from "../../payments/purchase-poll.js";
+import { dispatchRunTerminalEventJob } from "../../plugin-host/run-terminal-events.js";
 import { compactHistory } from "../../runtime/context/history-compaction.js";
 import { expireRunSecrets } from "../../secrets/run-secrets-expiry.js";
 import { retrySecretCleanup } from "../../secrets/secret-cleanup.js";
@@ -184,6 +185,7 @@ export function createBackgroundJobHandlers(deps: {
     "messaging.reply": async ({ runId }) => {
       await delivery?.deliverRun(runId);
     },
+    "plugin.turn-finished": ({ runId }) => dispatchRunTerminalEventJob(deps.prisma, runId),
     "messaging.inbound_settle": asOwner(messagingIdentity, async (payload) => {
       // Fail rather than finish, so the queue keeps the job for a process that can reply.
       if (!delivery) throw new Error("inbound message settling has no messaging delivery");

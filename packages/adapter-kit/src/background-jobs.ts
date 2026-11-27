@@ -87,6 +87,7 @@ const payloadSchemas = {
     follower: z.boolean().optional(),
   }),
   "messaging.reply": z.object({ runId: z.string().min(1) }),
+  "plugin.turn-finished": z.object({ runId: z.string().min(1) }),
   "messaging.deliver": z.object({ runId: z.string().min(1).optional() }),
   "messaging.progress": z.object({ runId: z.string().min(1) }),
   "secret.cleanup": z.object({

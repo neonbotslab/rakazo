@@ -1090,6 +1090,8 @@ export interface BackgroundJobPayloads {
   };
   /** Backup for recording and sending what an ended run said where its turn came from. */
   "messaging.reply": { runId: string };
+  /** Backup for delivering a committed terminal event to its enabled host plugins. */
+  "plugin.turn-finished": { runId: string };
   /**
    * The previous release's outbox drain, drained by the new path.
    * Jobs under this name can stay queued across releases, so it goes only once none are left.

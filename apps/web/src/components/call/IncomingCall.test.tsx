@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 
 import type { Bot } from "@rakazo/contracts";
+import type { PluginNotice } from "@rakazo/core/plugin-host";
 import { deferred } from "@rakazo/core/test-async";
 import type { ReactNode } from "react";
 import { act, Suspense } from "react";
@@ -11,6 +12,13 @@ import type { CallState } from "../../lib/calls/call-session";
 import { getSnapshot, isLeavingSession, startCall } from "../../lib/calls/call-session";
 import { rpc } from "../../lib/query/rpc";
 import { IncomingCall } from "./IncomingCall";
+
+const noticePolicy = vi.hoisted(() =>
+  vi.fn<(notice: PluginNotice) => (PluginNotice & { silent?: true }) | null>(),
+);
+vi.mock("../../lib/plugin-host/web-plugins", () => ({
+  useWebNotificationPolicy: () => noticePolicy,
+}));
 
 vi.mock("@lingui/react/macro", () => ({
   useLingui: () => ({
@@ -92,6 +100,7 @@ beforeEach(() => {
   visibility = "hidden";
   vi.spyOn(document, "visibilityState", "get").mockImplementation(() => visibility);
   vi.clearAllMocks();
+  noticePolicy.mockReset().mockImplementation((notice) => notice);
   vi.mocked(rpc.threads.answerCall).mockReset();
   vi.mocked(rpc.notifications.declineIncomingCall).mockReset();
   vi.mocked(rpc.threads.endCall).mockReset();
@@ -127,6 +136,26 @@ it("keeps the notification across roster refreshes and closes it on remote answe
   expect(close).not.toHaveBeenCalled();
   render([]);
   expect(close).toHaveBeenCalledOnce();
+});
+
+it("keeps a suppressed incoming call answerable without a banner or ringtone", () => {
+  const ringtone = vi.fn();
+  vi.stubGlobal(
+    "AudioContext",
+    class {
+      constructor() {
+        ringtone();
+        throw new Error("An audio context should not start for a suppressed call");
+      }
+    },
+  );
+  noticePolicy.mockReturnValue(null);
+  render([bot("call-1", start + 45_000)]);
+  expect(notify).not.toHaveBeenCalled();
+  expect(ringtone).not.toHaveBeenCalled();
+  expect(container.querySelector('[data-testid="incoming-call"]')?.textContent).toContain("Answer");
+  expect(noticePolicy).toHaveBeenCalledOnce();
+  expect(noticePolicy).toHaveBeenCalledWith(expect.objectContaining({ kind: "incomingCall" }));
 });
 
 it("notifies when a visible call's tab becomes hidden", () => {

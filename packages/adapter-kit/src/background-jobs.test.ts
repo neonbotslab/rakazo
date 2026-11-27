@@ -43,6 +43,7 @@ function handlers(): BackgroundJobHandlers {
     "messaging.send": vi.fn(async () => undefined),
     "messaging.inbound_settle": vi.fn(async () => undefined),
     "messaging.reply": vi.fn(async () => undefined),
+    "plugin.turn-finished": vi.fn(async () => undefined),
     "messaging.deliver": vi.fn(async () => undefined),
     "messaging.progress": vi.fn(async () => undefined),
     "secret.cleanup": vi.fn(async () => undefined),

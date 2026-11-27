@@ -1,4 +1,5 @@
 import * as z from "zod";
+import { PluginNoticeKindSchema } from "../account/host-plugins.js";
 import { ComputerStatusSchema } from "../computers/computer.js";
 import { Id } from "../ids.js";
 import { RunSchema } from "../runs/runs.js";
@@ -9,6 +10,7 @@ import { ThreadMessageSchema } from "./thread-message.js";
 /** A run alert the server also pushes to phones, already filtered by the chat's mute settings. */
 export const ChatAlertSchema = z.object({
   kind: z.enum(["completion", "failure", "help", "takeover"]),
+  noticeKind: PluginNoticeKindSchema.optional(),
   title: z.string(),
   body: z.string(),
   spaceId: Id,

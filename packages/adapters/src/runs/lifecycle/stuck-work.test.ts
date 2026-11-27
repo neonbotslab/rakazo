@@ -104,6 +104,7 @@ describe("reconcileStuckWork", () => {
     expect(publishChatAlert).toHaveBeenCalledTimes(1);
     expect(publishChatAlert).toHaveBeenCalledWith("user-1", {
       kind: "help",
+      noticeKind: "stuck",
       title: "Ada is still queued",
       body: "It has been waiting to start.",
       spaceId: "space-1",
@@ -457,6 +458,7 @@ describe("reconcileStuckWork", () => {
 
     expect(publishChatAlert).toHaveBeenCalledWith("user-1", {
       kind: "failure",
+      noticeKind: "expired",
       title: "Ada stopped",
       body: stuckWorkStatusMessage("queued"),
       spaceId: "space-1",

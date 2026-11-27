@@ -39,6 +39,8 @@ import {
 } from "../messaging/messaging-platforms.js";
 import { ExpoPushProvider } from "../notifications/expo-push.js";
 import { PrismaPushTokenStore } from "../notifications/push-token-store.js";
+import { followRunTerminalEvents } from "../plugin-host/run-terminal-events.js";
+import { serverPlugins } from "../plugin-host/server-plugins.js";
 import { WorkActivities } from "../runs/lifecycle/work-activity.js";
 import { createRunSecretWriter } from "../secrets/run-secret.js";
 import { withSecretWriteAhead } from "../secrets/secret-cleanup.js";
@@ -92,6 +94,7 @@ export type ServerFoundation = {
   events: ThreadEvents;
   /** The queue built from this client; a secret written or dropped before then gets no backup. */
   useJobs: (jobs: JobPublisher) => void;
+  stopRunTerminalEvents: () => Promise<void>;
   /** Push delivery built later; thread changes before then update no live status cards. */
   useWorkActivities: (workActivities: WorkActivities | undefined) => void;
 };
@@ -136,6 +139,7 @@ export async function startServerFoundation(input: {
     analytics,
     runSecretWriter: createRunSecretWriter(secrets),
   });
+  let terminalEvents: Promise<(() => Promise<void>) | undefined> | undefined;
   return {
     prisma,
     realtime,
@@ -144,6 +148,14 @@ export async function startServerFoundation(input: {
     events,
     useJobs: (jobs) => {
       secretCleanupJobs = jobs;
+      if (serverPlugins.size > 0)
+        terminalEvents ??= bestEffort(
+          "follow terminal run events",
+          followRunTerminalEvents({ prisma, realtime, jobs }),
+        );
+    },
+    stopRunTerminalEvents: async () => {
+      await (await terminalEvents)?.();
     },
     useWorkActivities: (next) => {
       workActivities = next;
@@ -241,12 +253,19 @@ export async function createMeetingServices(input: {
 
 /** Closes what every server process holds, after its own work has stopped. */
 export async function closeServerFoundation(
-  { prisma, secrets, realtime }: Pick<ServerFoundation, "prisma" | "secrets" | "realtime">,
+  {
+    prisma,
+    secrets,
+    realtime,
+    stopRunTerminalEvents,
+  }: Pick<ServerFoundation, "prisma" | "secrets" | "realtime"> &
+    Partial<Pick<ServerFoundation, "stopRunTerminalEvents">>,
   held: {
     jobs: Pick<JobPublisher, "close">;
     connectors: { mcp: { close(): Promise<void> }; installed: { close(): Promise<void> } };
   },
 ) {
+  await stopRunTerminalEvents?.();
   await held.jobs.close();
   await secrets.close();
   await realtime.close();

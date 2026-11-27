@@ -3,6 +3,7 @@
 import { i18n } from "@lingui/core";
 import type { Bot, ChatAlert } from "@rakazo/contracts";
 import { TAKEOVER_COMPUTER_PENDING_STATE } from "@rakazo/core";
+import type { PluginNotice } from "@rakazo/core/plugin-host";
 import type { Deferred } from "@rakazo/core/test-async";
 import { deferred } from "@rakazo/core/test-async";
 import { act } from "react";
@@ -11,6 +12,13 @@ import { createRoot } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { RpcClient } from "../../lib/query/rpc";
 import { useBrowserNotifications } from "./use-browser-notifications";
+
+const noticePolicy = vi.hoisted(() =>
+  vi.fn<(notice: PluginNotice) => (PluginNotice & { silent?: true }) | null>(),
+);
+vi.mock("../../lib/plugin-host/web-plugins", () => ({
+  useWebNotificationPolicy: () => noticePolicy,
+}));
 
 type Frame = { type: "alert" | "roster" | "heartbeat"; alert?: ChatAlert };
 
@@ -146,6 +154,7 @@ beforeEach(() => {
   vi.stubGlobal("Notification", FakeNotification);
   FakeNotification.permission = "granted";
   FakeNotification.shown = [];
+  noticePolicy.mockReset().mockImplementation((notice) => notice);
   bots[0] = { id: "bot-b", name: "Scout", notifyOnFinish: true } as Bot;
   groups[0] = { id: "group-g" };
   streams = [];
@@ -168,6 +177,34 @@ afterEach(() => {
 });
 
 describe("useBrowserNotifications chat alerts", () => {
+  it("patches a server expiry notice while keeping its click target and tag", async () => {
+    vi.spyOn(window, "focus").mockImplementation(() => undefined);
+    noticePolicy.mockImplementation((notice) =>
+      notice.kind === "expired" ? { ...notice, title: "Run expired", silent: true } : notice,
+    );
+    await open({ botId: "bot-a" });
+    await send({ kind: "failure", noticeKind: "expired", groupId: "group-g" });
+    const [notification] = FakeNotification.shown;
+    expect(notification?.title).toBe("Run expired");
+    expect(notification?.options).toMatchObject({ silent: true, tag: "thread-b:failure" });
+    notification?.onclick?.();
+    expect(openChat).toHaveBeenCalledWith(expect.objectContaining({ groupId: "group-g" }));
+  });
+
+  it("suppresses and consumes a replayed approval notice from the active thread", async () => {
+    focused = false;
+    noticePolicy.mockImplementation((notice) => (notice.kind === "approval" ? null : notice));
+    await open({ botId: "bot-b" });
+    const approval = reply("approval-1", [
+      { kind: "ask", text: "Approve the action?", status: "pending", approvalEffectId: "effect" },
+    ]);
+    hook.notifyBrowserForEvent(approval, "thread-b", 4, true, "Scout", true, undefined);
+    hook.notifyBrowserForEvent(approval, "thread-b", 4, true, "Scout", true, undefined);
+    expect(shown()).toEqual([]);
+    expect(noticePolicy).toHaveBeenCalledTimes(1);
+    expect(noticePolicy).toHaveBeenCalledWith(expect.objectContaining({ kind: "approval" }));
+  });
+
   it("alerts for every kind in another chat while the app is focused", async () => {
     await open({ botId: "bot-a" });
     await send({});

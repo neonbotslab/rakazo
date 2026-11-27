@@ -1,21 +1,26 @@
 import type { Bot, ChatAlert, ProductEvent } from "@rakazo/contracts";
 import { chatSnoozed } from "@rakazo/core";
 import type { RefObject } from "react";
-import { useCallback, useEffect, useRef } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef } from "react";
 import { computerUpdates } from "../../lib/computers/computer-updates";
 import {
+  browserNotificationKind,
   browserNotificationTag,
   deliverBrowserNotification as deliverNativeBrowserNotification,
   shouldNotifyBrowser,
 } from "../../lib/platform/browser-notifications";
 import { notificationIcon, prepareNotificationIcons } from "../../lib/platform/notification-icon";
+import { useWebNotificationPolicy } from "../../lib/plugin-host/web-plugins";
 import { followStream } from "../../lib/query/follow-stream";
 import type { RpcClient } from "../../lib/query/rpc";
 import { isReadChangeKind, spaceChanged } from "../../lib/query/space-changes";
 import { organizationsChanged } from "../../lib/spaces/organizations";
 
+type BrowserNoticeEvent = Pick<ProductEvent, "id" | "type" | "threadId" | "botId" | "payload"> &
+  Partial<Pick<ProductEvent, "spaceId">>;
+
 type PendingBrowserNotification = {
-  event: Pick<ProductEvent, "id" | "type" | "threadId" | "botId" | "payload">;
+  event: BrowserNoticeEvent;
   botId: string;
   botName: string;
   groupId: string | undefined;
@@ -94,8 +99,16 @@ export function useBrowserNotifications(
   const rosterRef = useRef(roster);
   rosterRef.current = roster;
   const shown = useRef(new Set<Notification>());
-  useEffect(() => {
-    const show = (alert: ChatAlert) => {
+  const pendingAlerts = useRef(new Map<string, ChatAlert>());
+  const notifiedBrowserEvents = useRef(new Set<string>());
+  const pendingBrowserNotifications = useRef(new Map<string, PendingBrowserNotification>());
+  const noticePolicy = useWebNotificationPolicy();
+  const noticePolicyRef = useRef(noticePolicy);
+  useLayoutEffect(() => {
+    noticePolicyRef.current = noticePolicy;
+  }, [noticePolicy]);
+  const showAlert = useCallback(
+    (alert: ChatAlert) => {
       if (typeof Notification === "undefined" || Notification.permission !== "granted") return;
       const isOpen = alert.groupId
         ? alert.groupId === activeGroupId.current
@@ -107,37 +120,59 @@ export function useBrowserNotifications(
           (document.visibilityState === "visible" && document.hasFocus()))
       )
         return;
+      // Match the browser's replace-by-tag behavior while account preferences load.
+      const tag = `${alert.threadId}:${alert.kind}`;
+      const policy = noticePolicyRef.current;
+      if (!policy) {
+        pendingAlerts.current.set(tag, alert);
+        return;
+      }
+      const notice = policy({
+        kind:
+          alert.noticeKind ??
+          (alert.kind === "completion" ? "reply" : alert.kind === "help" ? "question" : alert.kind),
+        title: alert.title,
+        body: alert.body,
+        spaceId: alert.spaceId,
+        threadId: alert.threadId,
+      });
+      if (!notice) return;
       try {
         const bot = botsRef.current.find((candidate) => candidate.id === alert.botId);
         const icon = bot ? notificationIcon(bot) : undefined;
-        const notification = new Notification(alert.title, {
-          body: alert.body,
+        const notification = new Notification(notice.title, {
+          body: notice.body,
           ...(icon ? { icon } : {}),
-          // Per chat and kind: a repeat replaces its copy, but a question after a reply still pops up.
-          tag: `${alert.threadId}:${alert.kind}`,
+          ...(notice.silent ? { silent: true } : {}),
+          tag,
         });
         openChatOnClick(notification, shown.current, () => openChatRef.current(alert));
       } catch {
         // Some browsers only allow notifications from a service worker.
       }
-    };
+    },
+    [activeBotId, activeGroupId, botsRef],
+  );
+  useEffect(() => {
+    if (!meId) return;
     const stop = followStream(
       (signal) => rpc.notifications.subscribe(undefined, { signal }),
       (frame) => {
+        if (meIdRef.current !== meId) return;
         if (frame.type === "roster") rosterRef.current?.changed();
         else if (frame.type === "organizations") void organizationsChanged();
         else if (frame.type === "computerUpdates") computerUpdates.signalled();
         else if (isReadChangeKind(frame.type)) void spaceChanged(frame.type);
-        else if (frame.alert) show(frame.alert);
+        else if (frame.alert) showAlert(frame.alert);
       },
     );
     return () => {
       stop();
+      pendingAlerts.current.clear();
+      pendingBrowserNotifications.current.clear();
       for (const notification of shown.current) notification.close();
     };
-  }, [rpc]);
-  const notifiedBrowserEvents = useRef(new Set<string>());
-  const pendingBrowserNotifications = useRef(new Map<string, PendingBrowserNotification>());
+  }, [meId, rpc, showAlert]);
   // A permission answer can arrive after the shell has gone; its held notifications go with it.
   const mounted = useRef(false);
   useEffect(() => {
@@ -156,6 +191,8 @@ export function useBrowserNotifications(
     if (!currentBot || typeof Notification === "undefined") return true;
     // A reply queued while permission was pending can be snoozed before it is shown.
     if (snoozedOrdinaryReply(pending.event, chatFor(pending))) return true;
+    const policy = noticePolicyRef.current;
+    if (!policy) return false;
     const result = deliverNativeBrowserNotification(
       pending.event,
       currentBot.name || pending.botName,
@@ -166,8 +203,21 @@ export function useBrowserNotifications(
         permission: Notification.permission,
         notifiedEventIds: notifiedBrowserEvents.current,
         show: (title, body, tag) => {
+          const notice = policy({
+            kind: browserNotificationKind(pending.event),
+            title,
+            body,
+            spaceId: pending.event.spaceId,
+            threadId: pending.event.threadId,
+          });
+          if (!notice) return;
           const icon = notificationIcon(currentBot);
-          const notification = new Notification(title, { body, tag, ...(icon ? { icon } : {}) });
+          const notification = new Notification(notice.title, {
+            body: notice.body,
+            tag,
+            ...(icon ? { icon } : {}),
+            ...(notice.silent ? { silent: true } : {}),
+          });
           openChatOnClick(notification, shown.current, () =>
             openChatRef.current({ botId: pending.botId, groupId: pending.groupId }),
           );
@@ -184,9 +234,16 @@ export function useBrowserNotifications(
       }
     }
   }, [deliverBrowserNotification]);
+  useEffect(() => {
+    if (!noticePolicy) return;
+    const alerts = [...pendingAlerts.current.values()];
+    pendingAlerts.current.clear();
+    for (const alert of alerts) showAlert(alert);
+    flushPendingBrowserNotifications();
+  }, [noticePolicy, showAlert, flushPendingBrowserNotifications]);
   const notifyBrowserForEvent = useCallback(
     (
-      event: Pick<ProductEvent, "id" | "type" | "threadId" | "seq" | "botId" | "payload">,
+      event: BrowserNoticeEvent & Pick<ProductEvent, "seq">,
       subscribedThreadId: string | undefined,
       initialCursor: number,
       streamReady: boolean,

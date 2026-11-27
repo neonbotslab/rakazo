@@ -530,17 +530,34 @@ export function accountRoutes(ctx: RouterContext) {
         }
       }),
       subscribeCalls: authed.notifications.subscribeCalls.handler(async function* ({ context }) {
-        const { followIncomingCalls } = deps.events;
+        const { followIncomingCalls, followSpaceChanges } = deps.events;
         if (!deps.env?.phoneCallsEnabled || !followIncomingCalls) throw new ORPCError("NOT_FOUND");
         const { userId } = context.actor;
-        const signals = withHeartbeats(context, (signal) => followIncomingCalls(userId, signal));
+        const preferences = async function* (signal: AbortSignal) {
+          if (!followSpaceChanges) return;
+          try {
+            for await (const change of followSpaceChanges(
+              accountPreferencesChangesScope(userId),
+              signal,
+            )) {
+              if (change === "preferences") yield change;
+            }
+          } catch (error) {
+            await abortableDelay(SIGNAL_FAILURE_HOLD_MS, signal);
+            throw error;
+          }
+        };
+        const signals = withHeartbeats(context, (signal) =>
+          mergeStreams(followIncomingCalls(userId, signal), preferences(signal)),
+        );
         for await (const next of signals) {
-          yield next === HEARTBEAT
-            ? { type: "heartbeat" as const }
-            : {
-                type: "incoming.calls" as const,
-                payload: { calls: await loadUserIncomingCalls(deps.prisma, userId) },
-              };
+          if (next === HEARTBEAT) yield { type: "heartbeat" as const };
+          else if (next === "preferences") yield { type: next };
+          else
+            yield {
+              type: "incoming.calls" as const,
+              payload: { calls: await loadUserIncomingCalls(deps.prisma, userId) },
+            };
         }
       }),
       declineIncomingCall: authed.notifications.declineIncomingCall.handler(

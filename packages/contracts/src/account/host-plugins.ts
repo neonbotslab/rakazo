@@ -16,3 +16,18 @@ export const HostPluginPreferenceSchema = z.object({
 });
 
 export type HostPluginPreference = z.infer<typeof HostPluginPreferenceSchema>;
+
+export const PluginNoticeKindSchema = z.enum([
+  "reply",
+  "memberMessage",
+  "question",
+  "approval",
+  "failure",
+  "takeover",
+  "cancelled",
+  "stuck",
+  "expired",
+  "incomingCall",
+]);
+
+export type PluginNoticeKind = z.infer<typeof PluginNoticeKindSchema>;

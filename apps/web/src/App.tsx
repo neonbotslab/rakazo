@@ -5,6 +5,7 @@ import { LinkFaviconsContext, RemoteImagesContext } from "@rakazo/chat-ui/web";
 import { mobileMcpOAuthReturnUrl } from "@rakazo/contracts";
 import { analyticsScreen } from "@rakazo/core";
 import { Button } from "@rakazo/ui-web";
+import type { ReactNode } from "react";
 import {
   Suspense,
   useEffect,
@@ -46,6 +47,7 @@ import { analyticsSurface } from "./lib/platform/desktop";
 import { identifyMonitoringUser } from "./lib/platform/monitoring";
 import { markAfterPaint, markOnce } from "./lib/platform/performance";
 import { lazyComponent } from "./lib/platform/preload-recovery";
+import { WebPluginProvider } from "./lib/plugin-host/web-plugins";
 import { remoteImagesPreference } from "./lib/preferences/remote-images-preference";
 import { QueryUserProvider, setQueryUser } from "./lib/query/query";
 import { rpc } from "./lib/query/rpc";
@@ -123,6 +125,14 @@ export function App() {
   );
 }
 
+function AccountScope({ userId, children }: { userId: string | null; children: ReactNode }) {
+  return (
+    <QueryUserProvider value={userId}>
+      <WebPluginProvider>{children}</WebPluginProvider>
+    </QueryUserProvider>
+  );
+}
+
 function SessionApp() {
   const [searchParams] = useSearchParams();
   const next = signInNext(searchParams.get("next"));
@@ -191,7 +201,7 @@ function SessionApp() {
 
   const user = session.data?.user;
   return (
-    <QueryUserProvider value={user?.id ?? null}>
+    <AccountScope userId={user?.id ?? null}>
       <AiDataConsentPrompt key={user?.id ?? "anonymous"} />
       <MarkdownLinkPrompt>
         <div className="h-full" data-rakazo-app-state="ready">
@@ -356,7 +366,7 @@ function SessionApp() {
           </Suspense>
         </div>
       </MarkdownLinkPrompt>
-    </QueryUserProvider>
+    </AccountScope>
   );
 }
 

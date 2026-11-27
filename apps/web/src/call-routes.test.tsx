@@ -2,6 +2,7 @@
 
 import type { IncomingBotCall } from "@rakazo/contracts";
 import type * as CoreModule from "@rakazo/core";
+import type { WebPluginHooks } from "@rakazo/core/plugin-host";
 import type { Deferred } from "@rakazo/core/test-async";
 import { deferred, flush } from "@rakazo/core/test-async";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
@@ -14,6 +15,7 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({
   me: vi.fn(),
   subscribeCalls: vi.fn(),
+  plugins: vi.fn(),
   voiceStatus: vi.fn(),
   endCall: vi.fn(),
   declineIncomingCall: vi.fn(),
@@ -67,9 +69,21 @@ vi.mock("./lib/bootstrap", () => ({
   getLabs: () => [],
   subscribeLabs: () => () => {},
 }));
+vi.mock("./lib/plugin-host/web-plugin-registry", async () => {
+  const { createPluginRegistry } = await import("@rakazo/core/plugin-host");
+  return {
+    webPlugins: createPluginRegistry<WebPluginHooks>([
+      {
+        manifest: { id: "test/sample", name: "Suppress calls", version: "1.0.0", apiVersion: 1 },
+        hooks: { onNotification: () => ({ kind: "suppress" }) },
+      },
+    ]),
+  };
+});
 vi.mock("./lib/query/rpc", () => {
   const client = {
     me: mocks.me,
+    hostPlugins: { list: mocks.plugins },
     voice: { status: mocks.voiceStatus },
   };
   return {
@@ -125,18 +139,26 @@ async function settle() {
 
 /** The server's call stream: each push replaces the ringing calls, as its frames do. */
 let pushCalls: (calls: IncomingBotCall[]) => void = () => {};
+let changePreferences: () => void = () => {};
 function callStream(signal: AbortSignal) {
-  const frames: IncomingBotCall[][] = [];
+  type Frame =
+    | { type: "incoming.calls"; payload: { calls: IncomingBotCall[] } }
+    | { type: "preferences" };
+  const frames: Frame[] = [];
   let wake: Deferred | undefined;
   pushCalls = (calls) => {
-    frames.push(calls);
+    frames.push({ type: "incoming.calls", payload: { calls } });
+    wake?.resolve();
+  };
+  changePreferences = () => {
+    frames.push({ type: "preferences" });
     wake?.resolve();
   };
   signal.addEventListener("abort", () => wake?.resolve());
   return (async function* () {
     while (!signal.aborted) {
-      const calls = frames.shift();
-      if (calls) yield { type: "incoming.calls" as const, payload: { calls } };
+      const frame = frames.shift();
+      if (frame) yield frame;
       else {
         wake = deferred();
         await wake.promise;
@@ -168,6 +190,7 @@ beforeEach(() => {
   }));
   vi.clearAllMocks();
   mocks.me.mockImplementation(async () => ({ phoneCallsEnabled: true, spaceId: "space-1" }));
+  mocks.plugins.mockImplementation(async () => []);
   mocks.subscribeCalls.mockImplementation(async (_input, { signal }) => callStream(signal));
   mocks.voiceStatus.mockImplementation(async () => ({ ready: true, transcribe: false }));
   mocks.endCall.mockResolvedValue(undefined);
@@ -181,6 +204,7 @@ afterEach(async () => {
   endCall();
   await act(async () => root.unmount());
   container.remove();
+  vi.restoreAllMocks();
   vi.unstubAllGlobals();
 });
 
@@ -234,6 +258,57 @@ it("rings for an incoming call on a page outside the shell", async () => {
   await settle();
   expect(mocks.declineIncomingCall).toHaveBeenCalledWith({ callId: "call-1" });
   expect(find('[data-testid="incoming-call"]')).toBeNull();
+});
+
+it("reads synced plugin preferences for incoming calls outside the shell", async () => {
+  let enabled = false;
+  const initialRead = deferred();
+  mocks.plugins.mockImplementation(async () => {
+    await initialRead.promise;
+    return [{ id: "test/sample", name: "Suppress calls", enabled }];
+  });
+  const ring = vi.fn();
+  vi.stubGlobal(
+    "AudioContext",
+    class {
+      constructor() {
+        ring();
+        throw new Error("Audio is unavailable in the test browser");
+      }
+    },
+  );
+  const notify = vi.fn();
+  vi.stubGlobal(
+    "Notification",
+    class {
+      static permission = "granted";
+      close() {}
+      constructor(title: string) {
+        notify(title);
+      }
+    },
+  );
+  vi.spyOn(document, "visibilityState", "get").mockReturnValue("hidden");
+  await render("/app/artifacts");
+  await act(async () => pushCalls([ringing("call-1")]));
+  await settle();
+  expect(find('[data-testid="incoming-call"]')).not.toBeNull();
+  expect(notify).not.toHaveBeenCalled();
+  expect(ring).not.toHaveBeenCalled();
+  await act(async () => initialRead.resolve());
+  await settle();
+  expect(notify).toHaveBeenCalledOnce();
+  expect(ring).toHaveBeenCalledOnce();
+
+  await act(async () => pushCalls([]));
+  enabled = true;
+  await act(async () => changePreferences());
+  await settle();
+  await act(async () => pushCalls([ringing("call-2")]));
+  await settle();
+  expect(find('[data-testid="incoming-call"]')).not.toBeNull();
+  expect(notify).toHaveBeenCalledOnce();
+  expect(ring).toHaveBeenCalledOnce();
 });
 
 it("stops ringing when the call stream says the call ended, and ignores other Spaces", async () => {

@@ -235,7 +235,7 @@ async function remindStuckRun(
   const delivery = await sendStuckNotice(deps.notifications, run, message);
   if (delivery === "delivered") {
     // After the push, so a failed push that is retried does not alert open apps twice.
-    publishChatAlert(deps.events, run, message, run.thread.groupId);
+    publishChatAlert(deps.events, run, message, run.thread.groupId, "stuck");
     await withTransactionRetry(() =>
       deps.prisma.$transaction(
         (tx) => markStuckNoticeDelivered(tx, claimId, run),
@@ -390,7 +390,7 @@ async function expireOne(
     botId: run.botId,
     threadId: run.threadId,
   };
-  publishChatAlert(deps.events, run, message, run.thread.groupId);
+  publishChatAlert(deps.events, run, message, run.thread.groupId, "expired");
   if (deps.notifications) await sendStuckNotice(deps.notifications, run, message);
 }
 

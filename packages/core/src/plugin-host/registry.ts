@@ -1,4 +1,4 @@
-import type { HostPluginId, HostPluginPreference } from "@rakazo/contracts";
+import type { HostPluginId, HostPluginPreference, PluginNoticeKind } from "@rakazo/contracts";
 import { HostPluginIdSchema } from "@rakazo/contracts";
 
 export interface PluginManifest {
@@ -72,7 +72,17 @@ export interface PluginToolCall extends PluginScope {
   readonly signal: AbortSignal;
 }
 
+export interface PluginTurnFinished extends PluginScope {
+  readonly eventId: string;
+  readonly runId: string;
+  readonly threadId: string;
+  readonly botId: string;
+  readonly status: "completed" | "failed" | "cancelled";
+  readonly finishedAt: string;
+}
+
 export interface ServerPluginHooks {
+  onTurnFinished?(event: PluginTurnFinished): PluginDecision<void>;
   beforeToolCall?(
     call: PluginToolCall,
     args: PluginJsonObject,
@@ -81,4 +91,21 @@ export interface ServerPluginHooks {
     call: PluginToolCall,
     result: PluginJson,
   ): PluginDecision<PluginRewrite<PluginJson>>;
+}
+
+export interface PluginNotice {
+  readonly kind: PluginNoticeKind;
+  readonly title: string;
+  readonly body: string;
+  readonly spaceId?: string;
+  readonly threadId?: string;
+}
+
+export type PluginNoticeDecision =
+  | { kind: "keep" }
+  | { kind: "suppress" }
+  | { kind: "patch"; title?: string; body?: string; silent?: true };
+
+export interface WebPluginHooks {
+  onNotification?(notice: PluginNotice): PluginNoticeDecision;
 }

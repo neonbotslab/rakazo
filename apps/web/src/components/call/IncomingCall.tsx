@@ -14,6 +14,7 @@ import {
   startCall,
   useCallSession,
 } from "../../lib/calls/call-session";
+import { useWebNotificationPolicy } from "../../lib/plugin-host/web-plugins";
 import { rpc, selectedSpaceId } from "../../lib/query/rpc";
 import { errorText } from "../../lib/query/user-error";
 import { useEventListener } from "../../lib/use-event-listener";
@@ -68,7 +69,7 @@ export function IncomingCall({
   transcribe,
   onAnswered,
 }: {
-  bots: readonly Pick<Bot, "id" | "name" | "color" | "avatarSet" | "incomingCall">[];
+  bots: readonly Pick<Bot, "id" | "spaceId" | "name" | "color" | "avatarSet" | "incomingCall">[];
   transcribe?: boolean;
   onAnswered: (botId: string) => void;
 }) {
@@ -94,6 +95,17 @@ export function IncomingCall({
   const bot = onCall ? undefined : nextIncomingCall(bots, handled, currentNow);
   const call = bot?.incomingCall;
   const callId = call?.callId;
+  const noticeTitle = bot ? t`${bot.name} is calling you` : "";
+  const noticeSpace = bot?.spaceId;
+  const noticePolicy = useWebNotificationPolicy();
+  const notice = useMemo(
+    () =>
+      callId && noticePolicy
+        ? noticePolicy({ kind: "incomingCall", title: noticeTitle, body: "", spaceId: noticeSpace })
+        : null,
+    [callId, noticePolicy, noticeSpace, noticeTitle],
+  );
+  const audible = Boolean(notice && !notice.silent);
 
   const expiresAt = call?.expiresAt;
   useEffect(() => {
@@ -106,10 +118,11 @@ export function IncomingCall({
   useTimeout(() => setNow(Date.now()), untilExpiry, `${callId}:${expiresAt}`);
 
   useEffect(() => {
-    if (!callId) return;
-    setError(null);
-    return startRingtone();
+    if (callId) setError(null);
   }, [callId]);
+  useEffect(() => {
+    if (callId && audible) return startRingtone();
+  }, [callId, audible]);
 
   const notification = useRef<Notification | null>(null);
   useEffect(() => {
@@ -120,21 +133,23 @@ export function IncomingCall({
   }, [callId]);
 
   const notify = () => {
-    if (!bot || !call || notified.current.has(call.callId)) return;
+    if (!notice || !call || notified.current.has(call.callId)) return;
     if (document.visibilityState === "visible" || typeof Notification === "undefined") return;
     if (Notification.permission !== "granted") return;
-    const notice = new Notification(t`${bot.name} is calling you`, {
+    const shown = new Notification(notice.title, {
       tag: `call:${call.callId}`,
       requireInteraction: true,
+      ...(notice.body ? { body: notice.body } : {}),
+      ...(notice.silent ? { silent: true } : {}),
     });
-    notification.current = notice;
+    notification.current = shown;
     notified.current.add(call.callId);
-    notice.onclick = () => {
+    shown.onclick = () => {
       window.focus();
-      notice.close();
+      shown.close();
     };
   };
-  useEffect(notify, [bot, call, t]);
+  useEffect(notify, [call, notice]);
   useEventListener(document, "visibilitychange", notify);
 
   if (!bot || !call) return null;
@@ -203,7 +218,7 @@ export function IncomingCall({
     <CallWindow
       data-testid="incoming-call"
       role="alertdialog"
-      aria-label={t`${bot.name} is calling you`}
+      aria-label={noticeTitle}
       className="fixed inset-0 z-50 flex flex-col items-center bg-background px-7 pt-[max(env(safe-area-inset-top),56px)] pb-[max(env(safe-area-inset-bottom),40px)] md:inset-auto md:end-4 md:top-16 md:w-[360px] md:items-stretch md:gap-4 md:rounded-[22px] md:border md:border-border md:bg-card md:p-[18px] md:shadow-lg"
     >
       <div className="flex flex-1 flex-col items-center justify-center gap-5 md:flex-none md:flex-row md:justify-start md:gap-3.5">

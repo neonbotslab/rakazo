@@ -241,7 +241,7 @@ export const threadsRpc = {
     subscribeCalls: oc.output(
       eventIterator(
         z.object({
-          type: z.enum(["incoming.calls", "heartbeat"]),
+          type: z.enum(["incoming.calls", "preferences", "heartbeat"]),
           payload: z.object({ calls: z.array(IncomingBotCallSchema) }).optional(),
         }),
       ),

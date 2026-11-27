@@ -834,14 +834,19 @@ async function showApprovalCard(ctx: RunContext, call: ToolCall, card: ApprovalC
   }
   await enqueueSteeringContinuation(deps, paused.continuationRunId);
   await reportBotMessageWait(deps, run, bot, `approve ${name}`, ctx.attempt.id);
-  await notifyRun(deps, run, {
-    kind: "help",
-    title: `${displayName(bot.name, "Bot")} needs approval`,
-    // Only the action, with no verb: the card's title can name a recipient or subject, and a call
-    // can decline rather than allow, so both stay on the card.
-    body: approvalActionName(name, args, card.batch, ctx.secrets),
-    botId: bot.id,
-    threadId: thread.id,
-  });
+  await notifyRun(
+    deps,
+    run,
+    {
+      kind: "help",
+      title: `${displayName(bot.name, "Bot")} needs approval`,
+      // Only the action, with no verb: the card's title can name a recipient or subject, and a call
+      // can decline rather than allow, so both stay on the card.
+      body: approvalActionName(name, args, card.batch, ctx.secrets),
+      botId: bot.id,
+      threadId: thread.id,
+    },
+    { noticeKind: "approval" },
+  );
   return pauseForApproval(ctx);
 }

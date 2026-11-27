@@ -1,4 +1,4 @@
-import type { ProductEvent } from "@rakazo/contracts";
+import type { PluginNoticeKind, ProductEvent } from "@rakazo/contracts";
 import {
   displayName,
   memberMessageAlerts,
@@ -130,6 +130,27 @@ export function browserNotificationMessage(
     title: i18n._({ id: "{name} finished", message: "{name} finished", values: { name } }),
     body: i18n._({ id: "Finished.", message: "Finished." }),
   };
+}
+
+export function browserNotificationKind(
+  event: Pick<ProductEvent, "type" | "payload">,
+): PluginNoticeKind {
+  if (event.type === "run.failed") return "failure";
+  if (event.type === "run.cancelled")
+    return event.payload.noticeKind === "expired" ? "expired" : "cancelled";
+  if (event.type !== "thread.message.created") return "reply";
+  if (event.payload.role === "user") return "memberMessage";
+  if (pendingTakeoverOnly(event)) return "takeover";
+  const blocks = event.payload.blocks;
+  if (Array.isArray(blocks)) {
+    const asks = blocks.filter(
+      (block) => block && typeof block === "object" && "kind" in block && block.kind === "ask",
+    );
+    if (asks.some((ask) => "approvalEffectId" in ask && typeof ask.approvalEffectId === "string"))
+      return "approval";
+    if (asks.length) return "question";
+  }
+  return "reply";
 }
 
 export function browserNotificationTag(

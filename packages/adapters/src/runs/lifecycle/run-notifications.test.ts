@@ -73,6 +73,7 @@ describe("notifyRun chat alerts", () => {
     await notifyRun(value, run, message);
     expect(publish).toHaveBeenCalledWith("user-1", {
       kind: "completion",
+      noticeKind: "reply",
       title: "Scout finished",
       body: "The report is ready.",
       spaceId: "space-1",
@@ -80,6 +81,20 @@ describe("notifyRun chat alerts", () => {
       threadId: "thread-1",
     });
     expect(send).toHaveBeenCalledOnce();
+  });
+
+  it("distinguishes approvals from questions on the live stream without changing push kind", async () => {
+    const { value, publish, send } = deps();
+    const help = { ...message, kind: "help" as const };
+    await notifyRun(value, run, help, { noticeKind: "approval" });
+    expect(publish).toHaveBeenCalledWith(
+      "user-1",
+      expect.objectContaining({ kind: "help", noticeKind: "approval" }),
+    );
+    expect(send).toHaveBeenCalledWith(
+      expect.not.objectContaining({ noticeKind: expect.anything() }),
+      expect.anything(),
+    );
   });
 
   it("names the group a bot's alert came from", async () => {
@@ -206,7 +221,7 @@ describe("notifications in a shared Space", () => {
     expect(publish).toHaveBeenCalledTimes(1);
     expect(publish).toHaveBeenCalledWith(
       "user-2",
-      expect.objectContaining({ threadId: "thread-1" }),
+      expect.objectContaining({ threadId: "thread-1", noticeKind: "memberMessage" }),
     );
   });
 
