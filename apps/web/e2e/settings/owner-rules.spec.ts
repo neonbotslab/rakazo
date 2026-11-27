@@ -1,13 +1,17 @@
+import { randomUUID } from "node:crypto";
 import { expect, test } from "@playwright/test";
+import type { OwnerRulesVersion } from "@rakazo/contracts";
+import { deferred } from "@rakazo/core/test-async";
 
 import {
   captureScreenshot,
   completeOnboarding,
   openUserSettings,
+  rpc,
   signup,
 } from "../helpers/helpers";
 
-test.use({ actionTimeout: 10_000 });
+test.use({ actionTimeout: 10_000, timezoneId: "America/Chicago" });
 
 test("bot rules autosave after typing stops", async ({ page }) => {
   await signup(page, `bot-rules-${Date.now()}@rakazo.test`, "password12", "Rules editor");
@@ -18,8 +22,31 @@ test("bot rules autosave after typing stops", async ({ page }) => {
   const rules = settings.getByRole("textbox");
   await rules.fill("Keep replies brief.");
   await expect(settings.getByText("Saved", { exact: true })).toBeVisible({ timeout: 5_000 });
+
+  const history = settings.getByRole("button", { name: "Version history" });
+  const saving = deferred<void>();
+  const release = deferred<void>();
+  await page.route(
+    /\/rpc\/ownerRules\/save(\?|$)/,
+    async (route) => {
+      saving.resolve();
+      await release.promise;
+      await route.continue();
+    },
+    { times: 1 },
+  );
+  try {
+    await rules.fill("Keep replies brief and lead with the answer.");
+    await expect(history).toBeVisible();
+    await saving.promise;
+    await expect(settings.getByRole("status")).toHaveText("Saving…");
+    await expect(history).toBeVisible();
+  } finally {
+    release.resolve();
+  }
+  await expect(settings.getByText("Saved", { exact: true })).toBeVisible({ timeout: 5_000 });
   await page.reload();
-  await expect(rules).toHaveValue("Keep replies brief.");
+  await expect(rules).toHaveValue("Keep replies brief and lead with the answer.");
 });
 
 test("bot rules group saves in history and restore the exact text", async ({ page }, testInfo) => {
@@ -40,8 +67,10 @@ test("bot rules group saves in history and restore the exact text", async ({ pag
   const versions = settings.getByRole("listitem");
   await expect(history).toHaveCount(0);
   await disclosure.click();
-  await expect(settings.getByText("Bots get nothing while this is empty.")).toBeVisible();
+  const emptyPreview = settings.getByText("Bots get nothing while this is empty.");
+  await expect(emptyPreview).toBeVisible();
   await disclosure.click();
+  await expect(emptyPreview).toHaveCount(0);
 
   await rules.fill("Keep replies brief.");
   await title.click();
@@ -110,6 +139,29 @@ ${original}
   await expect(rules).toHaveValue("");
 });
 
+test("bot rules history uses the browser time zone", async ({ page }) => {
+  await signup(page, `bot-rules-${Date.now()}@rakazo.test`, "password12", "Rules editor");
+  await completeOnboarding(page);
+  await rpc(page, "preferences/update", { timezone: "UTC" });
+  const version = await rpc<OwnerRulesVersion>(page, "ownerRules/save", {
+    text: "Keep replies brief.",
+    expected: null,
+    sessionId: randomUUID(),
+  });
+  await page.reload();
+  await page.getByTestId("timezone-prompt").getByRole("button", { name: "Keep" }).click();
+  const settings = await openUserSettings(page);
+  await settings.getByTestId("settings-nav-bot-rules").click();
+  await settings.getByRole("button", { name: "Version history" }).click();
+
+  const chicago = new Intl.DateTimeFormat("en", {
+    dateStyle: "medium",
+    timeStyle: "short",
+    timeZone: "America/Chicago",
+  });
+  await expect(settings.getByRole("time")).toHaveText(chicago.format(new Date(version.createdAt)));
+});
+
 test("phone back only confirms discarding over-limit drafts", async ({ page }) => {
   await signup(page, `bot-rules-${Date.now()}@rakazo.test`, "password12", "Rules editor");
   await completeOnboarding(page);
@@ -140,11 +192,23 @@ test("phone back only confirms discarding over-limit drafts", async ({ page }) =
   await expect(settings.getByRole("status")).toHaveText("Not saved");
   await page.keyboard.press("Escape");
   const confirmation = page.getByRole("alertdialog", { name: "Discard unsaved changes?" });
-  await expect(confirmation.getByRole("button", { name: "Keep editing" })).toBeFocused();
-  await confirmation.getByRole("button", { name: "Keep editing" }).click();
+  const keepEditing = confirmation.getByRole("button", { name: "Keep editing" });
+  const discard = confirmation.getByRole("button", { name: "Discard", exact: true });
+  await expect(keepEditing).toBeFocused();
+  const overlay = page.locator('[data-slot="alert-dialog-overlay"]');
+  await expect(overlay).toBeVisible();
+  await expect(overlay).toHaveCSS("backdrop-filter", "blur(4px)");
+  await expect
+    .poll(() => overlay.evaluate((element) => document.elementFromPoint(8, 8) === element))
+    .toBe(true);
+  await page.keyboard.press("Tab");
+  await expect(discard).toBeFocused();
+  await page.keyboard.press("Tab");
+  await expect(keepEditing).toBeFocused();
+  await keepEditing.click();
   await expect(rules).toHaveValue(overLimit);
   await settings.getByRole("button", { name: "Back", exact: true }).click();
-  await confirmation.getByRole("button", { name: "Discard", exact: true }).click();
+  await discard.click();
   await expect(settings.getByTestId("settings-nav")).toBeVisible();
   await nav.click();
   await expect(rules).toHaveValue("Keep replies brief.");
