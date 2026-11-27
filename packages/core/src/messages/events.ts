@@ -1,5 +1,6 @@
 import type {
   HistoryToolStep,
+  LiveToolCall,
   MessageBlock,
   ThreadMessage,
   ToolHistory,
@@ -12,23 +13,34 @@ import { modelFallbackFailure, parseModelFallbackFailure } from "../runs/run-err
 import { payloadAuthor } from "./message-replies.js";
 import type { SecretMatcher } from "./secret-matcher.js";
 import { createSecretMatcher } from "./secret-matcher.js";
+import { applyLiveToolProvenance, toolResultModifiers } from "./tool-result-provenance.js";
+
+type MessageEvent = {
+  seq: number;
+  type: string;
+  payload: unknown;
+  runId?: string | null;
+  createdAt: Date | string;
+  id: string;
+  threadId: string;
+  botId?: string | null;
+};
 
 export function projectMessages(
-  events: Array<{
-    seq: number;
-    type: string;
-    payload: unknown;
-    runId?: string | null;
-    createdAt: Date | string;
-    id: string;
-    threadId: string;
-    botId?: string | null;
-  }>,
+  events: MessageEvent[],
   runs?: readonly { id: string; status: string }[],
 ): ThreadMessage[] {
+  return projectThreadMessages(events, runs).messages;
+}
+
+export function projectThreadMessages(
+  events: MessageEvent[],
+  runs?: readonly { id: string; status: string }[],
+) {
   const messages: ThreadMessage[] = [];
   type LiveProjection = {
     blocks: MessageBlock[];
+    calls?: LiveToolCall[];
     meta: {
       id: string;
       threadId: string;
@@ -107,24 +119,27 @@ export function projectMessages(
       }
       continue;
     }
-    if (event.type === "thread.progress") {
-      const live = liveProjection(event, createdAt);
-      live.blocks = reduceLiveMessageBlocks(live.blocks, { type: "progress", payload });
-      live.meta = {
-        ...live.meta,
-        seq: event.seq,
-        botId: event.botId ?? undefined,
-        createdAt,
-      };
+    if (event.type === "agent.tool.called" && !showsAsLiveStep(payload.name)) continue;
+    if (event.type === "agent.tool.completed") {
+      if (event.runId) {
+        const live = liveProjection(event, createdAt);
+        const updated = applyLiveToolProvenance(live.blocks, live.calls, { ...event, payload });
+        live.blocks = updated.blocks;
+        live.calls = updated.calls;
+      }
       continue;
     }
-    if (event.type === "agent.tool.called") {
-      if (!showsAsLiveStep(payload.name)) continue;
+    if (event.type === "thread.progress" || event.type === "agent.tool.called") {
       const live = liveProjection(event, createdAt);
-      live.blocks = reduceLiveMessageBlocks(live.blocks, {
-        type: "tool",
-        name: String(payload.name ?? ""),
-      });
+      const blocks = reduceLiveMessageBlocks(
+        live.blocks,
+        event.type === "thread.progress"
+          ? { type: "progress", payload }
+          : { type: "tool", name: String(payload.name ?? "") },
+      );
+      const updated = applyLiveToolProvenance(blocks, live.calls, { ...event, payload });
+      live.blocks = updated.blocks;
+      live.calls = updated.calls;
       live.meta = {
         ...live.meta,
         seq: event.seq,
@@ -180,7 +195,12 @@ export function projectMessages(
       });
     }
   }
-  return messages;
+  const liveToolCalls = Object.fromEntries(
+    [...liveById.values()].flatMap(({ meta, calls }) =>
+      meta.runId && calls ? [[meta.runId, calls] as const] : [],
+    ),
+  );
+  return { messages, liveToolCalls };
 }
 
 /** A pause ends the current helper execution, even when the run later resumes. */
@@ -426,6 +446,7 @@ export function withToolStepOutcomes(
   calls: readonly {
     label: string;
     outcome: ToolStepOutcome | undefined;
+    resultModifiedBy?: readonly string[];
     /** The tool the call ran, and what it kept, when the call shows as its own step. */
     tool?: string;
     call?: ToolStepCall;
@@ -447,7 +468,14 @@ export function withToolStepOutcomes(
         return [...segments];
       for (const call of own)
         if (call.outcome) outcomes[call.outcome] = (outcomes[call.outcome] ?? 0) + 1;
-      const { outcomes: _previous, tool: _tool, calls: _calls, ...rest } = step;
+      const modifiers = toolResultModifiers(own.flatMap((call) => call.resultModifiedBy ?? []));
+      const {
+        outcomes: _previous,
+        resultModifiedBy: _modifiers,
+        tool: _tool,
+        calls: _calls,
+        ...rest
+      } = step;
       // Calls are kept for a step only when every one of them was, all of the same tool.
       const tool = own[0]?.tool;
       const kept = own.flatMap((call) => (call.call ? [call.call] : []));
@@ -460,6 +488,7 @@ export function withToolStepOutcomes(
         ...rest,
         ...(replayable ? { tool, calls: kept } : {}),
         ...(Object.keys(outcomes).length > 0 ? { outcomes } : {}),
+        ...(modifiers.length ? { resultModifiedBy: modifiers } : {}),
       });
     }
     annotated.push({ ...block, steps });

@@ -21,6 +21,7 @@ import type { FleetRun } from "../../tools/fleet-tools.js";
 import { builtinAgentSkillRecords } from "../../tools/skill-tools.js";
 import type { RunExecutorServices, RunHold } from "../lifecycle/run-attempt.js";
 import { buildApprovalContinuation } from "../lifecycle/run-effects.js";
+import { failRunBeforeTurn } from "../lifecycle/run-lifecycle.js";
 import { createReplyState } from "../lifecycle/run-progress.js";
 import { withLatestStepScreenshot, withRecentTurnImages } from "../turn/run-turn-images.js";
 import { missingTurnImagesInstruction } from "../turn/run-turn-images.prompt.js";
@@ -344,6 +345,27 @@ export async function buildTurnPrompt(
     );
     if (checkpointModelResolver && !turnCheckpoint)
       throw new Error("Pinned computer mode checkpoint cannot be restored");
+  }
+  if (!turnCheckpoint && hold.fence > 1) {
+    const unboundInvocation = await deps.prisma.externalEffect.findFirst({
+      where: {
+        runId: run.id,
+        spaceId: run.spaceId,
+        pluginInvocationId: { not: null },
+        status: { not: "approved" },
+      },
+      select: { id: true },
+    });
+    if (unboundInvocation) {
+      await failRunBeforeTurn(
+        deps,
+        run,
+        ctx.bot.name,
+        { attemptId: hold.attempt.id, workerId: hold.workerId, fence: hold.fence },
+        "A previous tool call could not be restored. Check its destination before starting again.",
+      );
+      return undefined;
+    }
   }
   const approvalContinuation = turnCheckpoint
     ? undefined

@@ -1,4 +1,9 @@
-import { MessageBlock, storedImageMimeType, ToolStepCallSchema } from "@rakazo/contracts";
+import {
+  MessageBlock,
+  storedImageMimeType,
+  ToolResultModifiersSchema,
+  ToolStepCallSchema,
+} from "@rakazo/contracts";
 import { reportJsonColumnOnce, runTurnCheckpointRow } from "@rakazo/db";
 import { z } from "zod";
 import type { ReplyState } from "./run-context.js";
@@ -13,6 +18,7 @@ const ReplySnapshotSchema = z.object({
     z.object({ label: z.string(), executionId: z.string(), tool: z.string().optional() }),
   ),
   toolOutcomes: z.array(z.tuple([z.string(), z.enum(["succeeded", "failed", "stopped"])])),
+  toolResultModifiers: z.array(z.tuple([z.string(), ToolResultModifiersSchema])).optional(),
   toolStepCalls: z.array(z.tuple([z.string(), ToolStepCallSchema])),
   keptResultChars: z.number(),
   latestScreenshot: z
@@ -52,6 +58,9 @@ export function snapshotReply(reply: ReplyState): ReplySnapshot {
     pendingToolNames: reply.pendingToolNames,
     toolCalls: reply.toolCalls,
     toolOutcomes: [...reply.toolOutcomes],
+    ...(reply.toolResultModifiers && {
+      toolResultModifiers: [...reply.toolResultModifiers].map(([id, names]) => [id, [...names]]),
+    }),
     toolStepCalls: [...reply.toolStepCalls],
     keptResultChars: reply.keptResultChars,
     ...(shot && {
@@ -97,9 +106,17 @@ export function restoreReply(reply: ReplyState, saved: unknown, runId: string): 
     );
     return;
   }
-  const { latestScreenshot, toolOutcomes, toolStepCalls, version: _, ...rest } = parsed.data;
+  const {
+    latestScreenshot,
+    toolOutcomes,
+    toolResultModifiers,
+    toolStepCalls,
+    version: _,
+    ...rest
+  } = parsed.data;
   Object.assign(reply, rest);
   reply.toolOutcomes = new Map(toolOutcomes);
+  reply.toolResultModifiers = toolResultModifiers ? new Map(toolResultModifiers) : undefined;
   reply.toolStepCalls = new Map(toolStepCalls);
   const mimeType = latestScreenshot && storedImageMimeType(latestScreenshot.mimeType);
   if (latestScreenshot && mimeType)

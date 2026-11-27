@@ -102,7 +102,7 @@ export async function assembleRunTurn(services: RunExecutorServices, hold: RunHo
       tools.tools.some(({ name }) => name === READ_MEETING_TRANSCRIPT),
     ),
   });
-  if (!(await turnMayStillStart(hold, { connected }))) return;
+  if (!prompt || !(await turnMayStillStart(hold, { connected }))) return;
   const fallbacks = await loadModelFallbacks(hold, { records, model, capabilities });
   return {
     saved,

@@ -256,6 +256,7 @@ export interface AgentToolExecutionResult {
 
 /** Hooks for a tool call that can report output before it returns. */
 export interface AgentToolExecutionObserver {
+  invocationId?: string;
   /**
    * A shell command has already produced output and is still running.
    * Resolves with the final redacted result when the process exits.
@@ -267,6 +268,8 @@ export interface AgentToolExecutionObserver {
 
 /** Ephemeral completion data for audit hooks; result contents must be redacted before persistence. */
 export interface AgentToolCompletion {
+  rawResult?: unknown;
+  resultModifiedBy?: readonly string[];
   name: string;
   executionId: string;
   durationMs: number;
@@ -784,6 +787,7 @@ export interface AgentRunRequest {
   allowSilentEmpty?: boolean;
   /** Contextual fallback when a non-silent run produces no written response. */
   emptyResponseText?: string;
+  sequentialConnectorTools?: boolean;
   executeTool?: (
     name: string,
     args: Record<string, unknown>,

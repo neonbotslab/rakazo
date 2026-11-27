@@ -16,6 +16,7 @@ import {
   catalogApprovalInnerArgs,
   catalogApprovalMatchesLiveRoute,
   catalogApprovalRequest,
+  catalogIdForRoute,
 } from "../../approvals/approval-effect.js";
 import { prepareAgentConnectionResponse } from "../../bots/agent-connections.js";
 import { childSettingsGiven, prepareChildBotUpdate } from "../../bots/child-bot-settings.js";
@@ -66,10 +67,13 @@ import {
 import {
   approvalReplayEffectToolName,
   CATALOG_APPROVAL_TOOL,
+  findPluginEffect,
   isSubagentToolExecution,
 } from "../lifecycle/run-effects.js";
 import { fleetPrepareDeps } from "../turn/run-model.js";
 import { refusal } from "../turn/tool-refusal.js";
+import type { PluginEffect } from "./run-tool-plugin-request.js";
+import { preparePluginToolRequest } from "./run-tool-plugin-request.js";
 import { BUILTIN_AGENT_TOOL_NAMES, FLEET_WRITE_TOOL_NAMES_SET } from "./run-tool-selection.js";
 import { holdSharedPageSave } from "./run-tools-pages.js";
 import { scheduleCreateRefusal, scheduleUpdatePreview } from "./run-tools-tasks.js";
@@ -89,6 +93,8 @@ export interface ToolRequest {
   /** The approved effect this attempt must replay next, if any. */
   nextApprovedTool: string | undefined;
   approvedEffectKey: string | undefined;
+  pluginEffect?: PluginEffect;
+  pluginInvocationId?: string;
   replayEffectToolName: string;
   fleetSummary: FleetCardSummary | undefined;
   /** Gated like a consequential action, even when the tool alone is not. */
@@ -119,6 +125,7 @@ export async function resolveToolRequest(
   name: string,
   args: Record<string, unknown>,
   executionId: string,
+  invocationId?: string,
 ): Promise<ToolRequest | ToolError> {
   const { deps, context } = ctx;
   const approvedReplays = ctx.tools.approvedReplays;
@@ -133,14 +140,33 @@ export async function resolveToolRequest(
       !connectorCall.route.resourceId &&
       connectorCall.route.toolName === CATALOG_EXECUTE,
   );
-  const approvedReplay = approvedCatalogReplay(
-    approvedReplays,
-    name,
-    CATALOG_APPROVAL_TOOL,
-    onCatalogExecuteRoute,
-  );
+  let pluginEffect =
+    invocationId &&
+    ctx.state.effects.storedTurnCheckpoint &&
+    (connectorCall.route?.resourceId || onCatalogExecuteRoute) &&
+    !BUILTIN_AGENT_TOOL_NAMES.has(name)
+      ? await findPluginEffect(deps, ctx.run, invocationId)
+      : undefined;
+  const pluginCatalog = catalogApprovalDetails(pluginEffect?.request, CATALOG_APPROVAL_TOOL);
+  const pluginDirect = boundDirectApprovalDetails(pluginEffect?.request, CATALOG_APPROVAL_TOOL);
+  const approvedKey = approvedReplays.nextIdempotencyKey();
+  const replayApproval = !pluginEffect || pluginEffect.idempotencyKey === approvedKey;
+  if (
+    pluginEffect &&
+    !replayApproval &&
+    (pluginEffect.status === "approved" || (approvedKey && pluginEffect.status === "intended"))
+  )
+    return refusal("approved_request_not_replayed", "An earlier approved request must run first.");
+  const approvedReplay = replayApproval
+    ? approvedCatalogReplay(approvedReplays, name, CATALOG_APPROVAL_TOOL, onCatalogExecuteRoute)
+    : {};
   if (approvedReplay.error) return { error: approvedReplay.error };
-  if (approvedReplay.args) connectorCall.args = approvedReplay.args;
+  const savedCallArgs = onCatalogExecuteRoute
+    ? (pluginCatalog?.args ??
+      (pluginDirect && { id: catalogIdForRoute(pluginDirect.route), arguments: pluginDirect.args }))
+    : undefined;
+  connectorCall.args = savedCallArgs ?? approvedReplay.args ?? connectorCall.args;
+  const wrapperCall = connectorCall;
   let catalogRemapped = false;
   let resolvedTool: ConnectorTool | undefined;
   if (name.startsWith("cloud_agent_") && !validCloudAgentArgs(name, args)) {
@@ -183,38 +209,21 @@ export async function resolveToolRequest(
         connectorCall = resolved.call;
       }
     } catch (error) {
+      ctx.context.signal.throwIfAborted();
       await markReadOutsideContent(ctx);
       return { error: sanitizeConnectorError(error) };
     }
   }
-  if (approvedReplay.args && !catalogRemapped) {
+  if ((savedCallArgs || approvedReplay.args) && !catalogRemapped) {
     return refusal(
       "approved_catalog_request_unresolved",
       "Approved catalog request could not be resolved to a tool. Deny and retry the direct tool call.",
     );
   }
-  if (
-    !catalogRemapped &&
-    connectorCall.route?.resourceId &&
-    connectorCall.route.connectorId &&
-    connectorCall.route.toolName
-  ) {
-    effectRequest = boundDirectApprovalRequest(
-      {
-        connectorId: connectorCall.route.connectorId,
-        resourceId: connectorCall.route.resourceId,
-        resourceRevision: connectorCall.route.resourceRevision,
-        connectionId: connectorCall.route.connectionId,
-        toolName: connectorCall.route.toolName,
-      },
-      args,
-      CATALOG_APPROVAL_TOOL,
-    );
-  }
   // Approval applies to the exact persisted request, never to a payload the model
   // reconstructs after the worker resumes. This also makes a changed reconstruction
   // hit the already-approved effect instead of creating a second approval card.
-  const nextApprovedTool = approvedReplays.nextToolName();
+  const nextApprovedTool = replayApproval ? approvedReplays.nextToolName() : undefined;
   let approvedEffectKey: string | undefined;
   const nextApprovedRequest = approvedReplays.nextRequest();
   const liveRoute =
@@ -229,6 +238,8 @@ export async function resolveToolRequest(
           toolName: connectorCall.route.toolName,
         }
       : undefined;
+  if (!catalogRemapped && liveRoute)
+    effectRequest = boundDirectApprovalRequest(liveRoute, args, CATALOG_APPROVAL_TOOL);
   const nextBound = boundDirectApprovalDetails(nextApprovedRequest, CATALOG_APPROVAL_TOOL);
   const nextCatalog = catalogApprovalDetails(nextApprovedRequest, CATALOG_APPROVAL_TOOL);
   // After collision uniquify, the live tool name may differ from the stored effect
@@ -246,13 +257,16 @@ export async function resolveToolRequest(
       `Approved request ${nextApprovedTool} must be replayed before ${name}.`,
     );
   }
-  // Drain FIFO only when the pending approval matches this path (catalog vs direct).
+  const matchingApproval =
+    nextApprovedTool && (nextApprovedTool === name || sameBoundResource || sameCatalogTarget)
+      ? nextApprovedTool
+      : undefined;
   const replayEffectToolName = approvalReplayEffectToolName(
     name,
     nextApprovedTool,
     sameBoundResource || sameCatalogTarget,
   );
-  if (nextApprovedTool && (nextApprovedTool === name || sameBoundResource || sameCatalogTarget)) {
+  if (matchingApproval) {
     const pathError = approvalReplayPathError(
       name,
       catalogRemapped,
@@ -269,8 +283,17 @@ export async function resolveToolRequest(
       CATALOG_APPROVAL_TOOL,
     );
     if (resourceError) return { error: resourceError };
-    approvedEffectKey = approvedReplays.nextIdempotencyKey();
-    const approvedRequest = approvedReplays.take(nextApprovedTool)!;
+    approvedEffectKey = approvedKey;
+    const approvedInvocationId = approvedReplays.nextPluginInvocationId();
+    if (!pluginEffect && approvedInvocationId) {
+      pluginEffect = await findPluginEffect(deps, ctx.run, approvedInvocationId);
+      if (!pluginEffect || pluginEffect.idempotencyKey !== approvedKey)
+        return refusal(
+          "plugin_tool_request_unavailable",
+          "The approved tool request is unavailable.",
+        );
+    }
+    const approvedRequest = nextApprovedRequest;
     const approvedCatalog = catalogApprovalDetails(approvedRequest, CATALOG_APPROVAL_TOOL);
     if (approvedCatalog && !catalogRemapped) {
       // Shrink-to-direct: restore approved inner arguments, not the wrapper envelope.
@@ -311,6 +334,23 @@ export async function resolveToolRequest(
       }
     }
   }
+
+  const plugin = await preparePluginToolRequest(ctx, {
+    tool: resolvedTool ?? ctx.tools.connector.get(name),
+    args,
+    executionId,
+    invocationId: matchingApproval ? undefined : invocationId,
+    route: liveRoute,
+    wrapper: catalogRemapped ? wrapperCall : undefined,
+    saved: pluginEffect,
+  });
+  if (plugin && "error" in plugin) return plugin;
+  if (plugin) {
+    args = plugin.args;
+    effectRequest = plugin.effectRequest;
+    connectorCall = { ...connectorCall, args };
+  }
+  if (matchingApproval) approvedReplays.take(matchingApproval);
   return {
     name,
     args,
@@ -321,7 +361,9 @@ export async function resolveToolRequest(
     catalogRemapped,
     nextApprovedTool,
     approvedEffectKey,
-    replayEffectToolName,
+    pluginEffect,
+    pluginInvocationId: plugin?.invocationId,
+    replayEffectToolName: pluginEffect?.kind ?? replayEffectToolName,
     fleetSummary: undefined,
     heldForApproval: false,
     settingsChange: false,

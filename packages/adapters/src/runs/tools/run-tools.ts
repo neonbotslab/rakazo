@@ -14,6 +14,7 @@ import { IMAGE_RETURNING_COMPUTER_TOOLS } from "../../models/model-vision.js";
 import { MODEL_CANNOT_SEE_MESSAGE } from "../../models/model-vision.prompt.js";
 import { personalCalendarTools } from "../../personal-calendar/personal-calendar.tool-definition.js";
 import { calendarTool } from "../../personal-calendar/run-calendar-tool.js";
+import { projectPluginToolResult } from "../../plugin-host/tool-hooks.js";
 import { strategicInitiativeToolAllowed } from "../../routines/strategic-initiative.js";
 import type { RunContext } from "../assembly/run-context.js";
 import { markReadOutsideContent } from "../assembly/run-context.js";
@@ -279,7 +280,7 @@ async function dispatchTool(
   if (IMAGE_RETURNING_COMPUTER_TOOLS.has(name) && !ctx.computer.acceptsImages) {
     return refuse(refusal("model_cannot_see_images", MODEL_CANNOT_SEE_MESSAGE));
   }
-  const request = await resolveToolRequest(ctx, name, args, executionId);
+  const request = await resolveToolRequest(ctx, name, args, executionId, observer?.invocationId);
   if ("error" in request) return refuse(request);
   // A catalog call resolves to a connector tool after the checks above; one named like a local
   // tool (message_agent, cloud_agent_*, ...) would otherwise run that local handler instead.
@@ -299,6 +300,16 @@ async function dispatchTool(
       await markReadOutsideContent(ctx, gate.result, {
         ownComputer: ownComputerResult(request.name),
       });
+    }
+    if (gate.effect?.pluginInvocationId) {
+      const result = await projectPluginToolResult(
+        ctx,
+        gate.effect.id,
+        request.name,
+        executionId,
+        gate.result,
+      );
+      return refuse(result, request.name);
     }
     return refuse(gate.result, request.name);
   }
@@ -322,7 +333,10 @@ async function dispatchTool(
   try {
     const result = await runHandler();
     if (!isToolError(result)) outcome = "success";
-    return result;
+    const { effect } = gate.call.applied;
+    return effect.pluginInvocationId
+      ? await projectPluginToolResult(ctx, effect.id, gate.call.name, executionId, result)
+      : result;
   } finally {
     const route = gate.call.connectorCall.route;
     await auditToolCall(ctx, gate.call.name, outcome, {

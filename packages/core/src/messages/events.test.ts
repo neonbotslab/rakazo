@@ -1,4 +1,4 @@
-import type { MessageBlock } from "@rakazo/contracts";
+import { MessageBlock } from "@rakazo/contracts";
 import { describe, expect, it } from "vitest";
 import { modelFallbackFailure, normalizeRunError } from "../runs/run-error.js";
 import {
@@ -1221,6 +1221,30 @@ describe("liveActivityLine", () => {
 });
 
 describe("withToolStepOutcomes", () => {
+  it("keeps modified result names on their grouped step when saving the message", () => {
+    const segments = appendToolCallSegment(
+      appendToolCallSegment(appendToolCallSegment([], "shell"), "shell"),
+      "web_search",
+    );
+    const annotated = withToolStepOutcomes(segments, [
+      { label: "Shell", outcome: "succeeded", resultModifiedBy: ["First"] },
+      { label: "Shell", outcome: "succeeded", resultModifiedBy: ["First", "Second"] },
+      { label: "Web search", outcome: "succeeded" },
+    ]);
+    expect(MessageBlock.parse(splitToolHistory(annotated).blocks[0])).toEqual({
+      kind: "steps",
+      steps: [
+        {
+          label: "Shell",
+          count: 2,
+          outcomes: { succeeded: 2 },
+          resultModifiedBy: ["First", "Second"],
+        },
+        { label: "Web search", count: 1, outcomes: { succeeded: 1 } },
+      ],
+    });
+  });
+
   it("tallies each call's outcome on the step it showed as, in order", () => {
     const segments = noteLastToolStep(
       appendToolCallSegment(

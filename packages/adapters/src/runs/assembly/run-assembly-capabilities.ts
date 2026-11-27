@@ -835,7 +835,7 @@ export async function selectRunTools(
   const approvedEffects = await deps.prisma.externalEffect.findMany({
     where: { runId, status: "approved" },
     orderBy: APPROVED_EFFECT_REPLAY_ORDER,
-    select: { kind: true, request: true, idempotencyKey: true },
+    select: { kind: true, request: true, idempotencyKey: true, pluginInvocationId: true },
   });
   const approvedEffectReplays = createApprovedEffectReplayQueue(approvedEffects);
   return {

@@ -1,4 +1,5 @@
 import type { HistoryToolStep, MessageBlock } from "@rakazo/contracts";
+import { MAX_TOOL_RESULT_MODIFIER_NAME_LENGTH } from "@rakazo/contracts";
 import {
   callIdFromClientNonce,
   isBackgroundRunTrigger,
@@ -72,6 +73,11 @@ export function redactBlocks(blocks: MessageBlock[], secrets: string[]): Message
           ...step,
           label: redactSecrets(step.label, secrets),
           ...(step.note === undefined ? {} : { note: redactSecrets(step.note, secrets) }),
+          ...(step.resultModifiedBy && {
+            resultModifiedBy: step.resultModifiedBy.map((name) =>
+              redactSecrets(name, secrets).slice(0, MAX_TOOL_RESULT_MODIFIER_NAME_LENGTH),
+            ),
+          }),
           // Secrets a later call revealed are redacted from earlier calls' arguments too.
           ...(step.calls
             ? {

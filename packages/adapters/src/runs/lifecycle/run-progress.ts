@@ -205,6 +205,7 @@ export function withReplyToolOutcomes(
       outcome: reply.toolOutcomes.get(executionId) ?? unfinished,
       tool,
       call: reply.toolStepCalls.get(executionId),
+      resultModifiedBy: reply.toolResultModifiers?.get(executionId),
     })),
   );
 }

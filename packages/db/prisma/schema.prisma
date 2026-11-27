@@ -1587,26 +1587,29 @@ model NativeCalendarRequest {
 }
 
 model ExternalEffect {
-  id             String   @id @default(cuid())
-  spaceId        String
-  space          Space    @relation(fields: [spaceId], references: [id], onDelete: Cascade)
-  runId          String
-  run            Run      @relation(fields: [runId], references: [id], onDelete: Cascade)
-  kind           String
-  idempotencyKey String
-  status         String
-  request        Json
+  id                 String   @id @default(cuid())
+  spaceId            String
+  space              Space    @relation(fields: [spaceId], references: [id], onDelete: Cascade)
+  runId              String
+  run                Run      @relation(fields: [runId], references: [id], onDelete: Cascade)
+  kind               String
+  idempotencyKey     String
+  status             String
+  request            Json
   /// The actions a batch tool call runs, which approval rules and read trust judge instead of
   /// `kind`. Empty when an entry names no action; null for any other tool.
-  batchActions   Json?
-  result         Json?
-  reviewDecision String?
-  reviewReason   String?
-  reviewModel    String?
-  createdAt      DateTime @default(now())
-  updatedAt      DateTime @updatedAt
+  batchActions       Json?
+  result             Json?
+  pluginInvocationId String?
+  pluginResult       Json?
+  reviewDecision     String?
+  reviewReason       String?
+  reviewModel        String?
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
 
   @@unique([idempotencyKey])
+  @@unique([runId, pluginInvocationId])
   @@index([runId, status])
   @@index([spaceId, kind, status])
   @@index([kind, status, updatedAt])

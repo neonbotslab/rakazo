@@ -1,4 +1,6 @@
+import { createHash } from "node:crypto";
 import type { AgentToolCompletion } from "@rakazo/adapter-kit";
+import { MAX_TOOL_RESULT_MODIFIER_NAME_LENGTH } from "@rakazo/contracts";
 import { redactSecrets } from "@rakazo/core";
 import type { ThreadEvents } from "@rakazo/db";
 import { RunHistoryWriteError } from "@rakazo/db";
@@ -8,6 +10,10 @@ import { sanitizeConnectorError } from "../../integrations/connector-safety.js";
 import type { ToolRefusal } from "./tool-refusal.js";
 import { refusalCode } from "./tool-refusal.js";
 import { isFailedToolResult, toolResultError } from "./tool-result-error.js";
+
+export function toolStepId(executionId: string) {
+  return createHash("sha256").update(executionId).digest("hex");
+}
 
 function isAuditableToolResult(value: unknown): value is {
   kind: "agent_tool_result";
@@ -50,10 +56,10 @@ export function toolCompletionOutcome(
   completion: AgentToolCompletion,
 ): "succeeded" | "failed" | undefined {
   if (completion.paused) return undefined;
-  const error =
-    completion.error === undefined ? toolResultError(completion.result) : completion.error;
+  const raw = completion.rawResult === undefined ? completion.result : completion.rawResult;
+  const error = completion.error === undefined ? toolResultError(raw) : completion.error;
   if (error !== undefined) return "failed";
-  const code = exitCode(completion.result);
+  const code = exitCode(raw);
   return code === undefined || code === 0 ? "succeeded" : "failed";
 }
 
@@ -64,26 +70,32 @@ export function toolCompletionAuditPayload(
   const durationMs = Number.isFinite(completion.durationMs)
     ? Math.max(0, Math.round(completion.durationMs))
     : 0;
-  const error =
-    completion.error === undefined ? toolResultError(completion.result) : completion.error;
+  const raw = completion.rawResult === undefined ? completion.result : completion.rawResult;
+  const error = completion.error === undefined ? toolResultError(raw) : completion.error;
   const outcome = toolCompletionOutcome(completion);
   const payload: Record<string, unknown> = {
     name: redactSecrets(completion.name, secrets),
     executionId: redactSecrets(completion.executionId, secrets),
+    toolStepId: toolStepId(completion.executionId),
     durationMs,
     outcome: outcome === "failed" ? "error" : (outcome ?? "paused"),
   };
   if (error !== undefined) {
     payload.error = sanitizeConnectorError(error, secrets);
   }
-  if (!isAuditableToolResult(completion.result)) return payload;
+  if (completion.resultModifiedBy?.length) {
+    payload.resultModifiedBy = completion.resultModifiedBy.map((name) =>
+      redactSecrets(name, secrets).slice(0, MAX_TOOL_RESULT_MODIFIER_NAME_LENGTH),
+    );
+  }
+  if (!isAuditableToolResult(raw)) return payload;
 
-  payload.contentTypes = completion.result.content.flatMap((part) => {
+  payload.contentTypes = raw.content.flatMap((part) => {
     if (!part || typeof part !== "object") return [];
     const type = (part as { type?: unknown }).type;
     return type === "text" || type === "image" ? [type] : [];
   });
-  const details = completion.result.details;
+  const details = raw.details;
   if (!details || typeof details !== "object" || Array.isArray(details)) {
     return payload;
   }
@@ -136,6 +148,7 @@ export async function appendToolCompletionAudit(
       "error.detail": sanitizeConnectorError(error, secrets),
       tool: redactSecrets(completion.name, secrets),
       executionId: redactSecrets(completion.executionId, secrets),
+      toolStepId: toolStepId(completion.executionId),
     });
   }
 }

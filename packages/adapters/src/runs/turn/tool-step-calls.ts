@@ -1,6 +1,6 @@
 import type { AgentRunRequest, AgentToolCompletion } from "@rakazo/adapter-kit";
 import type { ToolStepCall } from "@rakazo/contracts";
-import { storedImageMimeType } from "@rakazo/contracts";
+import { MAX_TOOL_RESULT_MODIFIER_NAME_LENGTH, storedImageMimeType } from "@rakazo/contracts";
 import { redactSecrets } from "@rakazo/core";
 import { getLogger } from "@rakazo/logging";
 import { redactToolArgsForReview } from "../../approvals/auto-review.js";
@@ -143,11 +143,24 @@ export function runReplaysToolHistory(
 export function keepToolStepResult(
   reply: Pick<
     ReplyState,
-    "toolStepCalls" | "keptResultChars" | "latestScreenshot" | "earlyCompletions"
+    | "toolStepCalls"
+    | "keptResultChars"
+    | "latestScreenshot"
+    | "earlyCompletions"
+    | "toolResultModifiers"
   >,
   completion: AgentToolCompletion,
   secrets: string[],
 ): void {
+  if (completion.resultModifiedBy?.length) {
+    reply.toolResultModifiers ??= new Map();
+    reply.toolResultModifiers.set(
+      completion.executionId,
+      completion.resultModifiedBy.map((name) =>
+        redactSecrets(name, secrets).slice(0, MAX_TOOL_RESULT_MODIFIER_NAME_LENGTH),
+      ),
+    );
+  }
   const call = reply.toolStepCalls.get(completion.executionId);
   if (!call) {
     // A fast call can finish before its own call event is handled; that handler keeps it then.

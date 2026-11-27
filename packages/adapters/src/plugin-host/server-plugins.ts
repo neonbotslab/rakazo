@@ -1,10 +1,10 @@
 import type { HostPluginId } from "@rakazo/contracts";
 import { ClientError } from "@rakazo/core";
-import type { PluginDefinition } from "@rakazo/core/plugin-host";
+import type { PluginDefinition, ServerPluginHooks } from "@rakazo/core/plugin-host";
 import { createPluginRegistry } from "@rakazo/core/plugin-host";
 import type { PrismaClient } from "@rakazo/db";
 
-const trustedPlugins: readonly PluginDefinition[] = [];
+const trustedPlugins: readonly PluginDefinition<ServerPluginHooks>[] = [];
 export const serverPlugins = createPluginRegistry(trustedPlugins);
 
 type PluginPreferencesDb = Pick<PrismaClient, "userHostPlugin">;

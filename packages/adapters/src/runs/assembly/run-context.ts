@@ -23,6 +23,7 @@ import {
   isToolEffectIdempotencyKey,
   toolEffectIdempotencyKey,
 } from "@rakazo/core/node/approval-effect-key";
+import type { PluginDefinition, ServerPluginHooks } from "@rakazo/core/plugin-host";
 import type { Bot, Computer, effectiveMemoryScope, Run, Task, Thread } from "@rakazo/db";
 import { dropRunTurnCheckpoint, saveRunTurnCheckpoint } from "@rakazo/db";
 import { getLogger } from "@rakazo/logging";
@@ -143,6 +144,7 @@ export interface ReplyState {
   toolCalls: { label: string; executionId: string; tool?: string }[];
   /** How each finished call ended, by execution id. */
   toolOutcomes: Map<string, ToolStepOutcome>;
+  toolResultModifiers?: Map<string, readonly string[]>;
   /** What each call that shows as its own step was called with and returned, by execution id. */
   toolStepCalls: Map<string, ToolStepCall>;
   /** Characters of results the reply has kept so far, against its budget. */
@@ -180,6 +182,7 @@ export interface EffectState {
   consumedIds: Set<string>;
   /** Turn snapshots captured before each tool call, by execution id. */
   pendingTurnCheckpoints: Map<string, () => string>;
+  pluginHooks?: Promise<readonly PluginDefinition<ServerPluginHooks>[]>;
   storedTurnCheckpoint: boolean;
 }
 

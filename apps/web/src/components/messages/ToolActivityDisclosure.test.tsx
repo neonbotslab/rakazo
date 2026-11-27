@@ -142,6 +142,21 @@ describe("ToolActivityDisclosure", () => {
 });
 
 describe("ToolSteps", () => {
+  it("labels only the step whose result a plugin changed", () => {
+    const html = renderToStaticMarkup(
+      <StandaloneToolActivity
+        live
+        stepCount={3}
+        steps={[
+          { label: "Search", count: 2, resultModifiedBy: ["Example plugin"] },
+          { label: "Read page", count: 1 },
+        ]}
+      />,
+    );
+    expect(visibleText(html)).toContain("Search ×2 Result modified by Example plugin ◷ Read page");
+    expect(html.match(/Result modified by/g)).toHaveLength(1);
+  });
+
   it("lists only the last steps and counts the earlier ones when limited", () => {
     const steps = stepsOf(LIVE_TOOL_STEP_WINDOW + 3);
     const html = renderToStaticMarkup(

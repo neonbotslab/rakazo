@@ -2,6 +2,7 @@ import { humanizeToolName, isBackgroundRunTrigger } from "@rakazo/core";
 import { getLogger } from "@rakazo/logging";
 import { isToolPauseResult } from "../../approvals/approval-effect.js";
 import { returnBotMessageOutcome } from "../../messaging/bot-messages.js";
+import { ProjectedToolResult } from "../../plugin-host/tool-hooks.js";
 import { clearRoutineBackoff } from "../../routines/routine-backoff.js";
 import { connectorStepNames } from "../../runtime/pi/tools/pi-runtime-tools.js";
 import type { RunContext } from "../assembly/run-context.js";
@@ -26,6 +27,7 @@ import {
   logLoopGuardStop,
   toolCompletionFromResult,
   toolCompletionOutcome,
+  toolStepId,
 } from "./tool-completion-audit.js";
 import {
   advanceOverLimitActionCalls,
@@ -94,7 +96,11 @@ export async function onToolCalled(ctx: RunContext, event: RuntimeEvent<"tool">)
     botId: bot.id,
     type: "agent.tool.called",
     runId,
-    payload: { name: event.name, executionId: event.executionId },
+    payload: {
+      name: event.name,
+      executionId: event.executionId,
+      toolStepId: toolStepId(event.executionId),
+    },
   });
   await showNarrationStatus(ctx, heldNote);
   tryFlushPendingTools(reply);
@@ -137,12 +143,21 @@ export async function onToolCalled(ctx: RunContext, event: RuntimeEvent<"tool">)
   const startedAt = Date.now();
   const audit = { spaceId: run.spaceId, threadId: thread.id, botId: bot.id, runId };
   try {
-    const result = await applyTool(ctx, event.name, event.args, event.executionId);
-    toolResults.set(event.executionId, toolResultFingerprint(result));
+    const result = await applyTool(ctx, event.name, event.args, event.executionId, undefined, {
+      invocationId: `script:${event.executionId}`,
+    });
+    const projection = result instanceof ProjectedToolResult ? result : undefined;
+    const raw = projection ? projection.raw : result;
+    toolResults.set(event.executionId, toolResultFingerprint(raw));
     const completion = toolCompletionFromResult(
       { name: event.name, executionId: event.executionId, durationMs: Date.now() - startedAt },
-      result,
+      raw,
     );
+    if (projection) {
+      completion.result = projection.value;
+      completion.rawResult = raw;
+      completion.resultModifiedBy = projection.resultModifiedBy;
+    }
     const outcome = toolCompletionOutcome(completion);
     if (outcome) reply.toolOutcomes.set(event.executionId, outcome);
     keepToolStepResult(reply, completion, ctx.secrets);

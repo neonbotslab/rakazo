@@ -1,4 +1,11 @@
-import type { Run, RunStatus, RunTrigger, ThreadMessage } from "@rakazo/contracts";
+import type {
+  LiveToolCall,
+  Run,
+  RunStatus,
+  RunTrigger,
+  ThreadMessage,
+  ThreadSnapshot,
+} from "@rakazo/contracts";
 import { RUN_TRIGGERS } from "@rakazo/contracts";
 import {
   isRunTerminalEvent,
@@ -12,6 +19,7 @@ import {
 } from "../messages/events.js";
 import { mergeThreadHistory, upsertMessageById } from "../messages/message-pages.js";
 import { payloadAuthor, replyMetadata } from "../messages/message-replies.js";
+import { applyLiveToolProvenance } from "../messages/tool-result-provenance.js";
 import {
   BACKGROUND_HELPER_TRIGGER,
   isActive,
@@ -53,6 +61,7 @@ export type LiveThreadSnapshot = {
   messages: LiveThreadMessage[];
   run: LiveThreadRun | null;
   activeRuns?: LiveThreadRun[];
+  liveToolCalls?: ThreadSnapshot["liveToolCalls"];
   members?: { botId: string; status?: string }[];
 };
 
@@ -111,11 +120,21 @@ function reduce(prev: LiveThreadSnapshot, event: ThreadSnapshotEvent): LiveThrea
   }
   if (stopsRunHelpers(event)) {
     const messages = settleRunSubagents(prev.messages, event.runId);
-    if (messages !== prev.messages) prev = { ...prev, messages };
+    const liveToolCalls = updateRunToolCalls(prev.liveToolCalls, event.runId, undefined);
+    if (messages !== prev.messages || liveToolCalls !== prev.liveToolCalls)
+      prev = { ...prev, messages, liveToolCalls };
   }
 
   if (event.type === "thread.cleared") {
-    return { ...prev, cursor, messages: [], olderCursor: null, run: null, activeRuns: [] };
+    return {
+      ...prev,
+      cursor,
+      messages: [],
+      olderCursor: null,
+      run: null,
+      activeRuns: [],
+      liveToolCalls: undefined,
+    };
   }
   if (event.type === "run.started") {
     // Background runs (ticket work) stay invisible in the transcript; the server
@@ -310,13 +329,36 @@ function reduce(prev: LiveThreadSnapshot, event: ThreadSnapshotEvent): LiveThrea
         ? { type: "progress", payload }
         : { type: "tool", name: String(payload.name ?? "") },
     );
+    const updated = applyLiveToolProvenance(
+      blocks,
+      runToolCalls(prev.liveToolCalls, event.runId),
+      event,
+    );
     return {
       ...prev,
       cursor,
-      messages: [...remaining, liveRow(prev, event, liveId, blocks)],
+      liveToolCalls: updateRunToolCalls(prev.liveToolCalls, event.runId, updated.calls),
+      messages: [...remaining, liveRow(prev, event, liveId, updated.blocks)],
     };
   }
-  if (event.type === "agent.tool.completed") return advanced();
+  if (event.type === "agent.tool.completed") {
+    if (!event.runId) return advanced();
+    const liveId = progressMessageId(event);
+    const row = prev.messages.find((message) => message.id === liveId);
+    const { blocks, calls } = applyLiveToolProvenance(
+      row?.blocks ?? [],
+      runToolCalls(prev.liveToolCalls, event.runId),
+      event,
+    );
+    const liveToolCalls = updateRunToolCalls(prev.liveToolCalls, event.runId, calls);
+    const messages =
+      row && row.blocks !== blocks
+        ? prev.messages.map((message) => (message === row ? { ...row, blocks } : message))
+        : prev.messages;
+    return liveToolCalls === prev.liveToolCalls && messages === prev.messages
+      ? advanced()
+      : { ...prev, cursor, messages, liveToolCalls };
+  }
   if (event.type === "thread.subagent") {
     const block = subagentBlockFromPayload(payload);
     const next = liveRow(prev, event, `subagent:${block.agentId}`, [block]);
@@ -382,11 +424,32 @@ function reduce(prev: LiveThreadSnapshot, event: ThreadSnapshotEvent): LiveThrea
       ...prev,
       cursor,
       messages: upsertMessageById(without, next),
+      liveToolCalls: updateRunToolCalls(prev.liveToolCalls, event.runId, undefined),
       activeRuns,
       run: answeredHelper && prev.run?.id === requestRunId ? (activeRuns?.[0] ?? null) : prev.run,
     };
   }
   return prev;
+}
+
+function runToolCalls(
+  liveToolCalls: LiveThreadSnapshot["liveToolCalls"],
+  runId: string | undefined,
+) {
+  return liveToolCalls && runId && Object.hasOwn(liveToolCalls, runId)
+    ? liveToolCalls[runId]
+    : undefined;
+}
+
+function updateRunToolCalls(
+  current: LiveThreadSnapshot["liveToolCalls"],
+  runId: string | undefined,
+  calls: LiveToolCall[] | undefined,
+) {
+  if (!runId || runToolCalls(current, runId) === calls) return current;
+  if (calls) return { ...current, [runId]: calls };
+  const { [runId]: _updated, ...remaining } = current ?? {};
+  return Object.keys(remaining).length ? remaining : undefined;
 }
 
 function runFromStartedEvent(

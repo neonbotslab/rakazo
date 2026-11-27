@@ -4,9 +4,10 @@ import type {
   ThreadMessage,
   ThreadSnapshot,
 } from "@rakazo/contracts";
+import { ThreadSnapshotSchema } from "@rakazo/contracts";
 import { describe, expect, it } from "vitest";
 import { answerableAskMessageIds, dismissableAskMessageIds } from "../asks/answerable-ask.js";
-import { withLiveStreamingProgress } from "../messages/events.js";
+import { projectThreadMessages, withLiveStreamingProgress } from "../messages/events.js";
 import { prependThreadHistoryPage } from "../messages/message-pages.js";
 import type { LiveThreadMessage, LiveThreadSnapshot } from "./thread-snapshot-events.js";
 import {
@@ -1133,6 +1134,65 @@ describe("thread event reduction", () => {
 
     expect(next?.cursor).toBe(5);
     expect(next?.messages).toEqual(initial.messages);
+  });
+
+  it("attributes an early completion only to its call in the same run", () => {
+    const changes: Partial<ProductEvent>[] = [
+      {
+        type: "agent.tool.called",
+        runId: "other-run",
+        payload: { name: "shell", executionId: "call" },
+      },
+      {
+        type: "agent.tool.completed",
+        runId: "run-1",
+        payload: { executionId: "call", resultModifiedBy: ["Sample"] },
+      },
+      { type: "thread.progress", runId: "run-1", payload: { text: "Checking ", streaming: true } },
+      {
+        type: "agent.tool.called",
+        runId: "run-1",
+        payload: { name: "shell", executionId: "call" },
+      },
+      { type: "thread.progress", runId: "run-1", payload: { delta: "now.", streaming: true } },
+    ];
+    let current: ThreadSnapshot | null = snapshot([]);
+    for (const [index, change] of changes.entries()) {
+      current = reduceThreadSnapshot(current, event({ ...change, seq: index + 4 }));
+    }
+    expect(
+      current?.messages.find((message) => message.id === "progress:other-run")?.blocks,
+    ).toEqual([{ kind: "steps", steps: [{ label: "Shell", count: 1 }] }]);
+    expect(current?.messages.find((message) => message.id === "progress:run-1")?.blocks).toEqual([
+      { kind: "text", text: "Checking now." },
+      { kind: "steps", steps: [{ label: "Shell", count: 1, resultModifiedBy: ["Sample"] }] },
+    ]);
+  });
+
+  it("matches a completion after a refresh using the opaque tool step ID", () => {
+    const projection = projectThreadMessages([
+      event({
+        type: "agent.tool.called",
+        seq: 4,
+        runId: "run-1",
+        payload: { name: "shell", executionId: "provider-id", toolStepId: "step" },
+      }),
+    ]);
+    const refreshed = ThreadSnapshotSchema.parse({ ...snapshot([], 4), ...projection });
+
+    const completed = reduceThreadSnapshot(
+      refreshed,
+      event({
+        type: "agent.tool.completed",
+        seq: 5,
+        runId: "run-1",
+        payload: { executionId: "redacted", toolStepId: "step", resultModifiedBy: ["Sample"] },
+      }),
+    );
+
+    expect(completed?.messages[0]?.blocks).toEqual([
+      { kind: "steps", steps: [{ label: "Shell", count: 1, resultModifiedBy: ["Sample"] }] },
+    ]);
   });
 
   it("holds a tool call that lands mid-sentence until the sentence completes", () => {

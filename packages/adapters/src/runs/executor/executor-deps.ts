@@ -19,6 +19,7 @@ import type {
   WebProvider,
 } from "@rakazo/adapter-kit";
 import type { LabFeature } from "@rakazo/contracts";
+import type { PluginDefinition, PluginScope, ServerPluginHooks } from "@rakazo/core/plugin-host";
 import type { PrismaClient, RunLease, ThreadEvents } from "@rakazo/db";
 import type {
   CloudAgentConnection,
@@ -45,6 +46,7 @@ export interface ExecutorDeps {
   home: AgentHomeStore;
   artifacts?: ArtifactStore;
   connector?: ConnectorProvider;
+  loadHostPlugins?: (scope: PluginScope) => Promise<readonly PluginDefinition<ServerPluginHooks>[]>;
   connectors?: {
     managed(id: string): ManagedConnectorProvider | undefined;
     managedProviders?(): ManagedConnectorProvider[];

@@ -22,6 +22,7 @@ import {
 import type { FinishedShellCommand } from "../../../computers/sandbox/shell-command-stream.js";
 import { liftMcpResultImages } from "../../../mcp/mcp-result-images.js";
 import { isVerbatimMcpResult } from "../../../mcp/verbatim-mcp-result.js";
+import { ProjectedToolResult } from "../../../plugin-host/tool-hooks.js";
 import { NO_RESPONSE } from "../../../runs/assembly/silent-reply.js";
 import { providerToolCallId } from "../../../runs/turn/tool-call-ids.js";
 import { settleMsArg, textContentArg } from "../../../runs/turn/tool-text.js";
@@ -399,7 +400,8 @@ function toAgentTool(
     // so a sibling request cannot start after one pauses for its card and share its answer, and the
     // page and desktop tools so a page action is gated against the page it will act on, never one
     // a sibling is about to change.
-    ...(SCHEDULE_TOOL_NAMES.has(tool.name) ||
+    ...((host.request.sequentialConnectorTools && tool.route) ||
+    SCHEDULE_TOOL_NAMES.has(tool.name) ||
     tool.name === "remember" ||
     tool.name === "request_secret" ||
     PAGE_CHANGING_TOOL_NAMES.has(tool.name)
@@ -561,6 +563,7 @@ function toAgentTool(
           });
           const startedAt = Date.now();
           let result: unknown;
+          let projection: ProjectedToolResult | undefined;
           let failure: unknown;
           try {
             result = await (async () => {
@@ -662,6 +665,15 @@ function toAgentTool(
                   executionId,
                   tool.route,
                   {
+                    ...(host.captureCheckpoint &&
+                      tool.route &&
+                      (host.request.sequentialConnectorTools || host.request.turnCheckpoint) && {
+                        invocationId: JSON.stringify([
+                          "pi-invocation",
+                          host.agentNamespace ?? "main",
+                          toolCallId || rawCallId,
+                        ]),
+                      }),
                     onShellStillRunning: (completion) => {
                       host.pendingShells.push(completion);
                     },
@@ -673,7 +685,8 @@ function toAgentTool(
                     ? result
                     : boundAgentToolResult(result);
                 }
-                const lifted = liftMcpResultImages(result);
+                if (result instanceof ProjectedToolResult) projection = result;
+                const lifted = liftMcpResultImages(projection ? projection.value : result);
                 return {
                   content: [
                     {
@@ -712,8 +725,10 @@ function toAgentTool(
             // model request, or the next assistant message replaces its final reply.
             if (host.pausePending || isTerminatingReplyResult(result)) host.abortTurn?.();
             const details = (
-              result as AgentToolResult<{ error?: unknown; isError?: unknown }> | undefined
-            )?.details;
+              projection
+                ? projection.raw
+                : (result as AgentToolResult<unknown> | undefined)?.details
+            ) as { error?: unknown; isError?: unknown } | undefined;
             const failed =
               failure !== undefined || details?.error != null || details?.isError === true;
             span?.setAttributes({ "pi.agent.tool.success": !failed });
@@ -725,6 +740,10 @@ function toAgentTool(
               executionId,
               durationMs: Math.max(0, Date.now() - startedAt),
               ...(result === undefined ? {} : { result }),
+              ...(projection && {
+                rawResult: projection.raw,
+                resultModifiedBy: projection.resultModifiedBy,
+              }),
               ...(failure === undefined ? {} : { error: failure }),
               ...(host.pausePending ? { paused: true } : {}),
             };

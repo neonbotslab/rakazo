@@ -145,6 +145,19 @@ export function isSubagentToolExecution(executionId: string): boolean {
   return agent !== undefined && agent !== "main";
 }
 
+export async function findPluginEffect(
+  deps: ExecutorDeps,
+  run: { id: string; spaceId: string },
+  pluginInvocationId: string,
+) {
+  const effect = await deps.prisma.externalEffect.findUnique({
+    where: { runId_pluginInvocationId: { runId: run.id, pluginInvocationId } },
+  });
+  if (effect && (effect.spaceId !== run.spaceId || effect.kind === RUN_TURN_CHECKPOINT_KIND))
+    throw new Error("Stored plugin invocation does not belong to this run.");
+  return effect ?? undefined;
+}
+
 export async function recordEffect(
   deps: ExecutorDeps,
   run: { id: string; spaceId: string; threadId: string; botId: string },
@@ -154,6 +167,7 @@ export async function recordEffect(
   legacyIdempotencyKey?: string,
   consumedIds?: Set<string>,
   batchActions?: string[],
+  pluginInvocationId?: string,
 ) {
   if (kind === RUN_TURN_CHECKPOINT_KIND) throw new Error("Unsupported tool effect kind");
   const existing = await deps.prisma.externalEffect.findUnique({
@@ -280,6 +294,7 @@ export async function recordEffect(
         status: "intended",
         request: request as never,
         ...(batchActions ? { batchActions } : {}),
+        ...(pluginInvocationId ? { pluginInvocationId } : {}),
       },
     }),
   );

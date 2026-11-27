@@ -3,6 +3,7 @@ import { modelRoleConnectionId } from "@rakazo/contracts";
 import { BACKGROUND_HELPER_TRIGGER, redactSecrets } from "@rakazo/core";
 import { isDatabaseUnavailable, recordUsage } from "@rakazo/db";
 import { getLogger } from "@rakazo/logging";
+import { enabledPluginToolHooks } from "../../plugin-host/tool-hooks.js";
 import { isStrategicInitiativeRun } from "../../routines/strategic-initiative.js";
 import { personSpeaker } from "../../runtime/context/history-speakers.js";
 import { backgroundHelpersAllowed } from "../../tasks/background-helpers.js";
@@ -63,10 +64,14 @@ export async function runModelTurn(
         }),
       )
       .catch((error: unknown) => getLogger().warn("run.prompt_version_failed", { error }));
-    const runtimeEvents = deps.runtime.run(modelTurnRequest(services, hold, turn), {
-      ...context,
-      signal: AbortSignal.any([context.signal, ctx.runtimeAbortController.signal]),
-    });
+    const pluginHooks = await enabledPluginToolHooks(ctx);
+    const runtimeEvents = deps.runtime.run(
+      {
+        ...modelTurnRequest(services, hold, turn),
+        sequentialConnectorTools: pluginHooks.length > 0,
+      },
+      { ...context, signal: AbortSignal.any([context.signal, ctx.runtimeAbortController.signal]) },
+    );
     if (await consumeRunEvents(ctx, runtimeEvents)) return;
     if (await interruptedByShutdown()) return;
     await completeRun(ctx);
@@ -363,7 +368,10 @@ function modelTurnRequest(
       );
       state.toolResults.set(
         completion.executionId,
-        toolResultFingerprint(completion.result, completion.error),
+        toolResultFingerprint(
+          completion.rawResult === undefined ? completion.result : completion.rawResult,
+          completion.error,
+        ),
       );
       return audited;
     },

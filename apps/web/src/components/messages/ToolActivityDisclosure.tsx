@@ -39,6 +39,7 @@ export function ToolSteps({
       {shown.map((step, offset) => {
         const index = hidden + offset;
         const isCurrent = index === currentIndex;
+        const modifiers = step.resultModifiedBy?.join(", ");
         return (
           <Fragment key={index}>
             {step.note ? (
@@ -66,6 +67,11 @@ export function ToolSteps({
                 {step.count > 1 ? ` ×${step.count}` : ""}
               </span>
             </div>
+            {modifiers ? (
+              <div className="ms-5 break-words text-label leading-5 text-muted-foreground">
+                <Trans>Result modified by {modifiers}</Trans>
+              </div>
+            ) : null}
           </Fragment>
         );
       })}

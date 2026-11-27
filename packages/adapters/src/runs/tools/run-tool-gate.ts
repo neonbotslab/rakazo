@@ -117,7 +117,9 @@ export interface ToolCall {
 export type ToolHandler = (ctx: RunContext, call: ToolCall) => Promise<unknown>;
 export type ToolHandlers = Record<string, ToolHandler>;
 
-type GateOutcome = { result: unknown; replayed?: true } | { call: ToolCall };
+type GateOutcome =
+  | { result: unknown; replayed?: true; effect?: AppliedEffect["effect"] }
+  | { call: ToolCall };
 
 /**
  * Decide whether a resolved call runs, asks the owner, is reviewed, or is refused, and record
@@ -129,8 +131,16 @@ export async function gateToolCall(
   observer: AgentToolExecutionObserver | undefined,
 ): Promise<GateOutcome> {
   const { deps, run, runId, context } = ctx;
-  const { name, executionId, connectorCall, resolvedTool, nextApprovedTool, approvedEffectKey } =
-    request;
+  const {
+    name,
+    executionId,
+    connectorCall,
+    resolvedTool,
+    nextApprovedTool,
+    approvedEffectKey,
+    pluginEffect,
+    pluginInvocationId,
+  } = request;
   const { replayEffectToolName } = request;
   let { args, effectRequest } = request;
   const viaConnector = !BUILTIN_AGENT_TOOL_NAMES.has(name);
@@ -459,12 +469,15 @@ export async function gateToolCall(
   // An approved replay claims the row the user approved. A derived key can differ
   // (another call's occurrence count), which would ask again and strand the approval.
   const effectKey =
+    pluginEffect?.idempotencyKey ??
     approvedEffectKey ??
     (usesApprovalKey && occurrence === 0
       ? approvalEffectKey(runId, replayEffectToolName, args)
       : toolEffectIdempotencyKey(runId, replayEffectToolName, args, occurrence));
   // Connector read-only hints must not bypass approval, review, or replay decisions.
   // A fetch to a new site is gated like any action, so it needs an effect to approve.
+  if (pluginInvocationId && ctx.state.effects.pendingTurnCheckpoints.has(executionId))
+    await persistTurnCheckpoint(ctx, executionId);
   const applied =
     READ_ONLY_AGENT_TOOLS.has(name) &&
     plan === "allow" &&
@@ -481,6 +494,7 @@ export async function gateToolCall(
           executionId,
           ctx.state.effects.consumedIds,
           batch && (batch.complete ? batch.actions : []),
+          pluginInvocationId,
         );
 
   // Refuse a repeat of a tool the user denied earlier in this run. Refusals carry a result,
@@ -626,7 +640,7 @@ export async function gateToolCall(
           return { result: gate.result, replayed: true };
         }
       } else {
-        return { result: gate.result, replayed: true };
+        return { result: gate.result, replayed: true, effect: applied.effect };
       }
     }
     if (gate.action === "paused") {
@@ -657,6 +671,7 @@ export async function gateToolCall(
       return {
         result: await settleToolUncertainty(ctx, call, applied.effect.id, gate.toolName),
         replayed: true,
+        effect: applied.effect,
       };
     } else if (gate.action === "execute") {
       const early = await call.claimOrReturn("approved");
@@ -664,7 +679,7 @@ export async function gateToolCall(
     }
   } else if (needsApproval && applied) {
     return { result: await requestApproval(ctx, call, card) };
-  } else if (call.bypassApproval && applied) {
+  } else if ((call.bypassApproval || pluginInvocationId) && applied) {
     const early = await call.claimOrReturn("intended");
     if (early !== undefined) return { result: early, replayed: true };
   }

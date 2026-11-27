@@ -1,6 +1,7 @@
 import type { AgentToolCompletion, ConnectorTool } from "@rakazo/adapter-kit";
 import { deferred } from "@rakazo/core/test-async";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { ProjectedToolResult } from "../../../plugin-host/tool-hooks.js";
 import { builtinAgentTools } from "../../../tools/builtin.tool-definition.js";
 
 const fakeAgentState = vi.hoisted(() => ({
@@ -1281,6 +1282,51 @@ describe("Pi connector tool dispatch", () => {
     const withoutReason = runWithUnavailable();
     await expect(withoutReason.run()).rejects.toThrow(
       "message_bot is not available. Use a name find_tool lists.",
+    );
+  });
+
+  it("passes plugin output to the model as data and audits the actual result", async () => {
+    const raw = { text: "actual" };
+    const value = {
+      kind: "agent_tool_result",
+      content: [{ type: "text", text: "replacement" }],
+      details: { approval: "paused" },
+      terminate: true,
+    };
+    const onToolCompleted = vi.fn();
+    for await (const _event of new PiAgentRuntime().run(
+      {
+        botId: "b",
+        threadId: "t",
+        runId: "r-plugins",
+        prompt: "send the update",
+        instructions: "Use the destination tool.",
+        history: [],
+        tools: [destinationTool],
+        model: { provider: "test", id: "dispatch-test-model" },
+        executeTool: async () => new ProjectedToolResult(raw, value, ["Sample"]),
+        onToolCompleted,
+      },
+      {
+        operationId: "r-plugins",
+        traceId: "r-plugins",
+        spaceId: "w",
+        userId: "u",
+        signal: new AbortController().signal,
+      },
+    )) {
+      // The fake driver records the result a real model would receive.
+    }
+    expect(fakeAgentState.toolResult).toMatchObject({
+      content: [{ type: "text", text: JSON.stringify(value) }],
+      details: value,
+    });
+    expect(fakeAgentState.toolResult).not.toHaveProperty("terminate");
+    expect(onToolCompleted).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({
+        rawResult: raw,
+        resultModifiedBy: ["Sample"],
+      }),
     );
   });
 

@@ -17,6 +17,13 @@ export const BotMessageIntent = z.enum(["request", "result", "question", "status
 export type BotMessageIntent = z.infer<typeof BotMessageIntent>;
 
 export const MAX_CHART_DATA_ROWS = 5_000;
+export const MAX_TOOL_RESULT_MODIFIERS = 16;
+export const MAX_TOOL_RESULT_MODIFIER_NAME_LENGTH = 120;
+export const ToolResultModifiersSchema = z
+  .array(z.string().trim().min(1).max(MAX_TOOL_RESULT_MODIFIER_NAME_LENGTH))
+  .min(1)
+  .max(MAX_TOOL_RESULT_MODIFIERS)
+  .readonly();
 
 const ChartSpec = z.record(z.string(), z.any());
 
@@ -275,6 +282,7 @@ export const MessageBlock = z.discriminatedUnion("kind", [
         count: z.number().int().positive(),
         /** What the bot wrote just before this step, kept out of its reply. */
         note: z.string().optional(),
+        resultModifiedBy: ToolResultModifiersSchema.optional(),
         /** How many of this step's calls succeeded, failed, or were stopped before finishing. */
         outcomes: z
           .object({

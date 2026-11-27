@@ -11,6 +11,7 @@ import { BOT_INSTRUCTIONS_MAX_LENGTH } from "@rakazo/contracts";
 import type { ActionApprovalRule } from "@rakazo/core";
 import { inboundRoutineBlock } from "@rakazo/core";
 import { approvalEffectKey, toolEffectIdempotencyKey } from "@rakazo/core/node/approval-effect-key";
+import type { PluginDefinition, ServerPluginHooks } from "@rakazo/core/plugin-host";
 import type { PrismaClient } from "@rakazo/db";
 import { createPendingSteeringRun, sendUserMessage } from "@rakazo/db";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -75,6 +76,8 @@ type Effect = {
   batchActions?: string[];
   result?: unknown;
   reviewDecision?: string;
+  pluginInvocationId?: string;
+  pluginResult?: unknown;
   runId?: string;
   spaceId?: string;
 };
@@ -124,12 +127,14 @@ function fixture({
   inbox = false,
   textBeforeCalls,
   replyMode = "chat",
+  loadHostPlugins,
 }: {
   /** The bot has an email address on this server. */
   inbox?: boolean;
   /** Text the model writes before its tool calls. */
   textBeforeCalls?: string;
   replyMode?: ReplyMode;
+  loadHostPlugins?: () => Promise<readonly PluginDefinition<ServerPluginHooks>[]>;
   /** Labs on for the whole deployment, such as the ticket board. */
   deploymentLabs?: string[];
   /** The Space's semantic memory provider; none by default. */
@@ -246,12 +251,28 @@ function fixture({
       async ({
         where,
       }: {
-        where: { kind: string; status: { in: string[] }; createdAt?: { gte: Date } };
+        where: {
+          id?: string;
+          runId?: string;
+          spaceId?: string;
+          kind?: string;
+          status: string | { in: string[] } | { not: string };
+          pluginInvocationId?: { not: null };
+          createdAt?: { gte: Date };
+        };
       }) =>
         effects.find(
           (effect) =>
-            effect.kind === where.kind &&
-            where.status.in.includes(effect.status) &&
+            (!where.id || effect.id === where.id) &&
+            (!where.runId || !effect.runId || effect.runId === where.runId) &&
+            (!where.spaceId || !effect.spaceId || effect.spaceId === where.spaceId) &&
+            (!where.kind || effect.kind === where.kind) &&
+            (!where.pluginInvocationId || effect.pluginInvocationId != null) &&
+            (typeof where.status === "string"
+              ? effect.status === where.status
+              : "in" in where.status
+                ? where.status.in.includes(effect.status)
+                : where.status.not !== effect.status) &&
             !(where.createdAt && createdAt.get(effect.id)! < where.createdAt.gte),
         ) ?? null,
     ),
@@ -304,10 +325,24 @@ function fixture({
       return { count: 0 };
     }),
     findUnique: vi.fn(
-      async ({ where }: { where: { id?: string; idempotencyKey?: string } }) =>
-        effects.find((effect) =>
-          where.id ? effect.id === where.id : effect.idempotencyKey === where.idempotencyKey,
-        ) ?? null,
+      async ({
+        where,
+      }: {
+        where: {
+          id?: string;
+          idempotencyKey?: string;
+          runId_pluginInvocationId?: { runId: string; pluginInvocationId: string };
+        };
+      }) =>
+        effects.find((effect) => {
+          if (where.runId_pluginInvocationId) {
+            return (
+              effect.runId === where.runId_pluginInvocationId.runId &&
+              effect.pluginInvocationId === where.runId_pluginInvocationId.pluginInvocationId
+            );
+          }
+          return where.id ? effect.id === where.id : effect.idempotencyKey === where.idempotencyKey;
+        }) ?? null,
     ),
     create: vi.fn(async ({ data }: { data: Omit<Effect, "id"> }) => {
       const effect = { ...data, id: `effect-${effects.length + 1}` };
@@ -624,13 +659,15 @@ function fixture({
       );
     }
     const executeCall = async (call: (typeof calls)[number]) => {
-      const result = call.name
-        ? await request.executeTool!(call.name, call.args, call.executionId)
-        : await request.executeTool!(
-            catalog ? "demo_execute_tool" : name,
-            catalog ? { id: catalogEntries([tool])[0]!.id, arguments: call.args } : call.args,
-            call.executionId,
-          );
+      const result = await request.executeTool!(
+        call.name ?? (catalog ? "demo_execute_tool" : name),
+        !call.name && catalog
+          ? { id: catalogEntries([tool])[0]!.id, arguments: call.args }
+          : call.args,
+        call.executionId,
+        undefined,
+        loadHostPlugins ? { invocationId: call.executionId } : undefined,
+      );
       results.push(result);
       return result;
     };
@@ -649,6 +686,7 @@ function fixture({
   const executor = createRunExecutor({
     deploymentModelKey: "fixture-model-key",
     prisma: transactionalPrisma,
+    loadHostPlugins,
     runtime: { describe: () => ({ capabilities: { scripted: false } }), run: runtimeRun },
     connector: {
       discoverTools: async () =>
@@ -784,6 +822,7 @@ function fixture({
     commit,
     sharedMemoryState,
     pauseRunForInput,
+    finalizeRun,
     enqueue,
     async deliverInbound(promptText: string, busyTrigger?: string) {
       const pending: Array<Record<string, unknown>> = [];
@@ -963,8 +1002,106 @@ describe("text written before an approval card", () => {
 });
 
 describe("connector read-only metadata and approval enforcement", () => {
+  const pluginCheckpoint = {
+    version: 1,
+    systemPrompt: "You are Assistant.",
+    pendingToolCallId: "call-1",
+    executionMode: "sequential",
+    messages: [],
+  } satisfies Omit<TurnCheckpoint, "provider" | "model">;
+
   beforeEach(() => {
     reviewMock.mockReset();
+  });
+
+  it("keeps the raw connector result and replays the saved model projection after the plugin is disabled", async () => {
+    let enabled = true;
+    const plugin = {
+      manifest: { id: "test/project-demo", name: "Project demo", version: "1", apiVersion: 1 },
+      hooks: { afterToolResult: () => ({ kind: "replace", value: { item: "projected-item" } }) },
+    } satisfies PluginDefinition<ServerPluginHooks>;
+    const f = fixture({ loadHostPlugins: async () => (enabled ? [plugin] : []) });
+    f.pauseWithTurnCheckpoint("call-1", pluginCheckpoint);
+
+    await f.run();
+    expect(f.turnCheckpoints).toHaveLength(1);
+    expect(f.effects[0]?.result).toEqual({ item: "item-1" });
+    expect(f.results.at(-1)).toMatchObject({
+      value: { item: "projected-item" },
+      resultModifiedBy: ["Project demo"],
+    });
+
+    enabled = false;
+    await f.run();
+    expect(f.execute).toHaveBeenCalledOnce();
+    expect(f.results.at(-1)).toMatchObject({
+      value: { item: "projected-item" },
+      resultModifiedBy: ["Project demo"],
+    });
+  });
+
+  it("rejects rewritten arguments that do not satisfy the connector schema", async () => {
+    const plugin = {
+      manifest: { id: "test/rewrite-demo", name: "Rewrite demo", version: "1", apiVersion: 1 },
+      hooks: { beforeToolCall: () => ({ kind: "replace", value: { id: 42 } }) },
+    } satisfies PluginDefinition<ServerPluginHooks>;
+    const f = fixture({
+      catalog: true,
+      rules: [{ effect: "require_approval", matchKind: "tool", matchValue: "demo_get_item" }],
+      loadHostPlugins: async () => [plugin],
+    });
+
+    await f.run();
+    expect(f.results.at(-1)).toMatchObject({ error: expect.stringContaining("invalid") });
+    expect(f.execute).not.toHaveBeenCalled();
+    expect(f.pauseRunForInput).not.toHaveBeenCalled();
+    expect(f.effects).toHaveLength(0);
+  });
+
+  it("reports uncertainty without dispatching a second time if provider success was not recorded", async () => {
+    let enabled = true;
+    const plugin = {
+      manifest: { id: "test/rewrite-demo", name: "Rewrite demo", version: "1", apiVersion: 1 },
+      hooks: {
+        beforeToolCall: () => ({ kind: "replace", value: { id: "rewritten-item" } }),
+      },
+    } satisfies PluginDefinition<ServerPluginHooks>;
+    const f = fixture({ catalog: true, loadHostPlugins: async () => (enabled ? [plugin] : []) });
+    f.pauseWithTurnCheckpoint("call-1", pluginCheckpoint);
+    const update = f.prisma.externalEffect.updateMany.getMockImplementation()!;
+    f.prisma.externalEffect.updateMany.mockImplementation(async (request) => {
+      if (request.data.status === "completed") throw new Error("completion write interrupted");
+      return update(request);
+    });
+
+    await f.run(true);
+    expect(f.execute).toHaveBeenCalledOnce();
+    expect(f.effects[0]?.status).toBe("executing");
+
+    enabled = false;
+    await f.run(true);
+    expect(f.results.at(-1)).toMatchObject({ uncertain: true });
+    expect(f.execute).toHaveBeenCalledOnce();
+  });
+
+  it("asks the user to verify the destination when a rewritten run cannot restore its checkpoint", async () => {
+    let enabled = true;
+    const plugin = {
+      manifest: { id: "test/rewrite-demo", name: "Rewrite demo", version: "1", apiVersion: 1 },
+      hooks: { beforeToolCall: () => ({ kind: "replace", value: { id: "rewritten-item" } }) },
+    } satisfies PluginDefinition<ServerPluginHooks>;
+    const f = fixture({ loadHostPlugins: async () => (enabled ? [plugin] : []) });
+
+    await f.run();
+    expect(f.execute).toHaveBeenCalledOnce();
+
+    enabled = false;
+    f.setCalls([{ args: { id: "item-1" }, executionId: "reconstructed-call" }]);
+    await f.run(true);
+    expect(f.execute).toHaveBeenCalledOnce();
+    expect(f.finalizeRun).toHaveBeenLastCalledWith(
+      expect.objectContaining({ outcome: "failed", error: expect.stringContaining("destination") }),
+    );
   });
 
   // A webhook run follows the owner's rules like any other run. Shell, free in the owner's own
@@ -1356,6 +1493,58 @@ describe("connector read-only metadata and approval enforcement", () => {
       expect(f.effects[0]!.status).toBe("completed");
       expect(f.results.at(-1)).toEqual({ item: "item-1" });
       expect(f.pauseRunForInput).toHaveBeenCalledOnce();
+    });
+
+    it("shows the rewritten arguments on the approval and dispatches that request after the plugin is disabled", async () => {
+      let enabled = true;
+      const plugin = {
+        manifest: { id: "test/rewrite-demo", name: "Rewrite demo", version: "1", apiVersion: 1 },
+        hooks: {
+          beforeToolCall: () => ({ kind: "replace", value: { id: "rewritten-item" } }),
+        },
+      } satisfies PluginDefinition<ServerPluginHooks>;
+      const f = fixture({
+        catalog,
+        rules: [{ effect: "require_approval", matchKind: "tool", matchValue: "demo_get_item" }],
+        loadHostPlugins: async () => (enabled ? [plugin] : []),
+      });
+      if (catalog) f.pauseWithTurnCheckpoint("call-1", pluginCheckpoint);
+
+      await f.run();
+      expect(f.execute).not.toHaveBeenCalled();
+      expect(askDetail(f)).toContain("rewritten-item");
+      expect(askDetail(f)).not.toContain("item-1");
+
+      enabled = false;
+      f.effects[0]!.status = "approved";
+      await f.run();
+
+      expect(f.execute).toHaveBeenCalledExactlyOnceWith(
+        expect.objectContaining({ args: { id: "rewritten-item" } }),
+        expect.anything(),
+      );
+      expect(f.pauseRunForInput).toHaveBeenCalledOnce();
+    });
+
+    it("does not dispatch again when the rewritten call retries after the plugin is disabled", async () => {
+      let enabled = true;
+      const plugin = {
+        manifest: { id: "test/rewrite-demo", name: "Rewrite demo", version: "1", apiVersion: 1 },
+        hooks: {
+          beforeToolCall: () => ({ kind: "replace", value: { id: "rewritten-item" } }),
+        },
+      } satisfies PluginDefinition<ServerPluginHooks>;
+      const f = fixture({ catalog, loadHostPlugins: async () => (enabled ? [plugin] : []) });
+      f.pauseWithTurnCheckpoint("call-1", pluginCheckpoint);
+
+      await f.run();
+      expect(f.results.at(-1)).toEqual({ item: "rewritten-item" });
+      expect(f.execute).toHaveBeenCalledOnce();
+
+      enabled = false;
+      await f.run();
+      expect(f.results.at(-1)).toEqual({ item: "rewritten-item" });
+      expect(f.execute).toHaveBeenCalledOnce();
     });
 
     it("executes a later identical-args call after an approved replay when approval is not required by default", async () => {

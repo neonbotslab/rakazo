@@ -38,12 +38,14 @@ export interface ApprovedEffectReplay {
   request: unknown;
   /** The approved row's key: a replay claims that row instead of deriving a new key. */
   idempotencyKey?: string;
+  pluginInvocationId?: string | null;
 }
 
 export interface ApprovedEffectReplayQueue {
   nextToolName(): string | undefined;
   nextRequest(): unknown;
   nextIdempotencyKey(): string | undefined;
+  nextPluginInvocationId(): string | undefined;
   take(toolName: string): unknown;
   assertDrained(): void;
 }
@@ -62,6 +64,9 @@ export function createApprovedEffectReplayQueue(
     },
     nextIdempotencyKey() {
       return pending[0]?.idempotencyKey;
+    },
+    nextPluginInvocationId() {
+      return pending[0]?.pluginInvocationId ?? undefined;
     },
     take(toolName) {
       const next = pending[0];

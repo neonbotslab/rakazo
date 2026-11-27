@@ -54,3 +54,31 @@ export function createPluginRegistry<Hooks extends object>(
     },
   };
 }
+
+export type PluginJson = null | boolean | number | string | PluginJson[] | PluginJsonObject;
+export interface PluginJsonObject {
+  [key: string]: PluginJson;
+}
+
+export type PluginRewrite<T> = { kind: "keep" } | { kind: "replace"; value: T };
+type PluginDecision<T> = T | Promise<T>;
+
+export interface PluginToolCall extends PluginScope {
+  readonly runId: string;
+  readonly threadId: string;
+  readonly botId: string;
+  readonly name: string;
+  readonly executionId: string;
+  readonly signal: AbortSignal;
+}
+
+export interface ServerPluginHooks {
+  beforeToolCall?(
+    call: PluginToolCall,
+    args: PluginJsonObject,
+  ): PluginDecision<PluginRewrite<PluginJsonObject>>;
+  afterToolResult?(
+    call: PluginToolCall,
+    result: PluginJson,
+  ): PluginDecision<PluginRewrite<PluginJson>>;
+}

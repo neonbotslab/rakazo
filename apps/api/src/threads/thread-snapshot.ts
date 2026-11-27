@@ -3,7 +3,7 @@ import {
   ACTIVE_RUN_STATUSES,
   BACKGROUND_HELPER_TRIGGER,
   BACKGROUND_RUN_TRIGGERS,
-  projectMessages,
+  projectThreadMessages,
   runFailureError,
 } from "@rakazo/core";
 import type { Prisma, PrismaClient } from "@rakazo/db";
@@ -138,7 +138,7 @@ export async function threadSnapshot(
       botId: target.botId,
       threadId: target.threadId,
       cursor: core.last?.seq ?? -1,
-      messages: messagesWithLiveEvents(core.messagePage.messages, core.liveEvents, core.activeRuns),
+      ...messagesWithLiveEvents(core.messagePage.messages, core.liveEvents, core.activeRuns),
       olderCursor: core.messagePage.olderCursor,
       run: core.run,
       activeRuns: core.activeRuns.map(mapRun),
@@ -244,7 +244,7 @@ export async function threadSnapshot(
     })),
     threadId: target.threadId,
     cursor: core.last?.seq ?? -1,
-    messages: messagesWithLiveEvents(core.messagePage.messages, core.liveEvents, core.activeRuns),
+    ...messagesWithLiveEvents(core.messagePage.messages, core.liveEvents, core.activeRuns),
     olderCursor: core.messagePage.olderCursor,
     // Match the live reducer: a failed latest terminal stays in run even while siblings are
     // still active or start late. A newer completed/cancelled terminal clears it.
@@ -290,10 +290,11 @@ function pickLatestTerminalRun<T extends { id: string; createdAt: Date; complete
 
 function messagesWithLiveEvents(
   persisted: ThreadSnapshot["messages"],
-  liveEvents: Parameters<typeof projectMessages>[0],
-  runs: NonNullable<Parameters<typeof projectMessages>[1]>,
+  liveEvents: Parameters<typeof projectThreadMessages>[0],
+  runs: NonNullable<Parameters<typeof projectThreadMessages>[1]>,
 ) {
-  const live = projectMessages(liveEvents, runs).filter((message) => {
+  const projection = projectThreadMessages(liveEvents, runs);
+  const live = projection.messages.filter((message) => {
     if (message.blocks.some((block) => block.kind === "progress" || block.kind === "steps")) {
       return true;
     }
@@ -304,7 +305,12 @@ function messagesWithLiveEvents(
       ),
     );
   });
-  return [...persisted, ...live];
+  return {
+    messages: [...persisted, ...live],
+    ...(Object.keys(projection.liveToolCalls).length > 0
+      ? { liveToolCalls: projection.liveToolCalls }
+      : {}),
+  };
 }
 
 async function mapRunWithRetryEligibility(

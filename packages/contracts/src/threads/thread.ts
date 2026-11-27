@@ -3,6 +3,7 @@ import { ComputerStatusSchema } from "../computers/computer.js";
 import { Id } from "../ids.js";
 import { RunSchema } from "../runs/runs.js";
 import { GroupMemberSchema } from "../spaces/groups.js";
+import { ToolResultModifiersSchema } from "./message-blocks.js";
 import { ThreadMessageSchema } from "./thread-message.js";
 
 /** A run alert the server also pushes to phones, already filtered by the chat's mute settings. */
@@ -46,6 +47,21 @@ export const ThreadMessagePageSchema = z.object({
 });
 export type ThreadMessagePage = z.infer<typeof ThreadMessagePageSchema>;
 
+const liveToolCall = {
+  executionId: z.string().min(1).max(1_024),
+  index: z.number().int().nonnegative(),
+};
+const LiveToolCallSchema = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("called"), ...liveToolCall }),
+  z.object({
+    kind: z.literal("modified"),
+    ...liveToolCall,
+    index: liveToolCall.index.optional(),
+    resultModifiedBy: ToolResultModifiersSchema,
+  }),
+]);
+export type LiveToolCall = z.infer<typeof LiveToolCallSchema>;
+
 export const ThreadSnapshotSchema = z.object({
   threadId: Id,
   cursor: z.number().int().min(-1),
@@ -57,6 +73,8 @@ export const ThreadSnapshotSchema = z.object({
   members: z.array(GroupMemberSchema).optional(),
   run: RunSchema.nullable(),
   activeRuns: z.array(RunSchema).optional(),
+  /** Unmatched tool starts and completions, keyed by run ID. */
+  liveToolCalls: z.record(Id, z.array(LiveToolCallSchema)).optional(),
   computer: ComputerStatusSchema.optional(),
 });
 export type ThreadSnapshot = z.infer<typeof ThreadSnapshotSchema>;
