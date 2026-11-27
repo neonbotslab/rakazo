@@ -18,6 +18,8 @@ import {
   stopsRunHelpers,
   subagentBlockFromPayload,
 } from "../messages/events.js";
+import type { LiveReplyTrace } from "../messages/live-reply-trace.js";
+import { applyLiveReplyTrace } from "../messages/live-reply-trace.js";
 import { mergeThreadHistory, upsertMessageById } from "../messages/message-pages.js";
 import { payloadAuthor, replyMetadata } from "../messages/message-replies.js";
 import { applyLiveToolProvenance } from "../messages/tool-result-provenance.js";
@@ -53,7 +55,7 @@ export type LiveThreadMessage = Omit<ThreadMessage, "threadId" | "seq" | "create
   Partial<Pick<ThreadMessage, "threadId" | "seq" | "createdAt">>;
 
 /** The parts of a thread snapshot that live events patch; each app's snapshot extends it. */
-export type LiveThreadSnapshot = {
+export type LiveThreadSnapshot = LiveReplyTrace & {
   threadId: string;
   groupId?: string;
   botId?: string;
@@ -90,7 +92,9 @@ export function isThreadSnapshotEvent(event: {
     event.type === "thread.message.updated" ||
     event.type === "run.started" ||
     event.type === "run.checkpointed" ||
-    (event.type === "thread.meta" && event.payload?.reasoningChanged === true) ||
+    (event.type === "thread.meta" &&
+      (event.payload?.reasoningChanged === true ||
+        event.payload?.traceReasoningChanged === true)) ||
     event.type === "run.waiting_input" ||
     event.type === "computer.takeover.requested" ||
     event.type === "computer.takeover.released" ||
@@ -119,9 +123,18 @@ function reduce(prev: LiveThreadSnapshot, event: ThreadSnapshotEvent): LiveThrea
   const advanced = () => (cursor === prev.cursor ? prev : { ...prev, cursor });
   const liveReasoning = applyLiveReasoning(prev.liveReasoning, event);
   if (liveReasoning !== prev.liveReasoning) prev = { ...prev, liveReasoning };
+  const settled = stopsRunHelpers(event);
+  const trace = applyLiveReplyTrace(
+    { liveTrace: prev.liveTrace, liveTracePending: prev.liveTracePending },
+    event,
+    settled,
+  );
+  if (trace.liveTrace !== prev.liveTrace || trace.liveTracePending !== prev.liveTracePending)
+    prev = { ...prev, ...trace };
   if (
     event.type === "run.checkpointed" ||
-    (event.type === "thread.meta" && payload.reasoningChanged === true)
+    (event.type === "thread.meta" &&
+      (payload.reasoningChanged === true || payload.traceReasoningChanged === true))
   )
     return advanced();
   if (
@@ -132,7 +145,7 @@ function reduce(prev: LiveThreadSnapshot, event: ThreadSnapshotEvent): LiveThrea
     // Group chats can retain the failure banner after the conversation has moved on.
     prev = { ...prev, run: { ...prev.run, retryable: false } };
   }
-  if (stopsRunHelpers(event)) {
+  if (settled) {
     const messages = settleRunSubagents(prev.messages, event.runId);
     const liveToolCalls = updateRunToolCalls(prev.liveToolCalls, event.runId, undefined);
     if (messages !== prev.messages || liveToolCalls !== prev.liveToolCalls)

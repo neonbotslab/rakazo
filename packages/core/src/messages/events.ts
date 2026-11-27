@@ -12,6 +12,8 @@ import { preserveIdentitySource } from "../bots/identity-source.js";
 import { cloudAgentBlockFromPayload } from "../integrations/cloud-agent.js";
 import { sliceWellFormed } from "../primitives/utf8.js";
 import { modelFallbackFailure, parseModelFallbackFailure } from "../runs/run-error.js";
+import type { LiveReplyTrace } from "./live-reply-trace.js";
+import { applyLiveReplyTrace } from "./live-reply-trace.js";
 import { payloadAuthor } from "./message-replies.js";
 import type { SecretMatcher } from "./secret-matcher.js";
 import { createSecretMatcher } from "./secret-matcher.js";
@@ -56,6 +58,7 @@ export function projectThreadMessages(
   const liveSubagents = new Map<string, ThreadMessage>();
   const durableSubagents = new Set<string>();
   let liveReasoning: ThreadSnapshot["liveReasoning"];
+  let trace: LiveReplyTrace = {};
   const liveProjection = (event: (typeof events)[number], createdAt: string): LiveProjection => {
     const id = progressMessageId(event);
     const existing = liveById.get(id);
@@ -79,7 +82,8 @@ export function projectThreadMessages(
     else liveById.clear();
   };
   for (const event of events) {
-    if (stopsRunHelpers(event)) {
+    const settled = stopsRunHelpers(event);
+    if (settled) {
       const settled = settleRunSubagents([...liveSubagents.values()], event.runId);
       for (const message of settled) {
         const block = message.blocks[0];
@@ -88,6 +92,7 @@ export function projectThreadMessages(
     }
     const payload = asRecord(event.payload);
     liveReasoning = applyLiveReasoning(liveReasoning, { ...event, payload });
+    trace = applyLiveReplyTrace(trace, { ...event, payload }, settled);
     const createdAt =
       typeof event.createdAt === "string" ? event.createdAt : event.createdAt.toISOString();
     if (event.type === "thread.message.created") {
@@ -177,7 +182,7 @@ export function projectThreadMessages(
       continue;
     }
     // A run that ends or pauses for input or takeover is no longer working, as in the live reducer.
-    if (stopsRunHelpers(event)) clearLive(event);
+    if (settled) clearLive(event);
   }
   let helpers = [...liveSubagents.values()];
   if (runs) {
@@ -206,7 +211,7 @@ export function projectThreadMessages(
       meta.runId && calls ? [[meta.runId, calls] as const] : [],
     ),
   );
-  return { messages, liveToolCalls, liveReasoning };
+  return { messages, liveToolCalls, liveReasoning, ...trace };
 }
 
 export function applyLiveReasoning(

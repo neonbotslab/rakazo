@@ -1,9 +1,15 @@
 import type { AgentRuntimeEvent } from "@rakazo/adapter-kit";
+import { splitToolHistory } from "@rakazo/core";
 import { deferred } from "@rakazo/core/test-async";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { RunContext } from "../assembly/run-context.js";
-import { createReplyState } from "../lifecycle/run-progress.js";
+import {
+  createReplyState,
+  flushPendingTools,
+  withReplyToolOutcomes,
+} from "../lifecycle/run-progress.js";
 import { consumeRunEvents } from "./run-turn.js";
+import { keepToolStepResult } from "./tool-step-calls.js";
 
 const requeued = vi.hoisted(() => vi.fn(async () => {}));
 vi.mock("../lifecycle/run-lifecycle.js", async (actual) => ({
@@ -65,7 +71,7 @@ async function context(row: { status: string }) {
       lazy: { throwIfFailed: () => {} },
       checkpoint: { flush: vi.fn() },
     },
-    tools: { approvedReplays: { assertDrained: () => {} } },
+    tools: { approvedReplays: { assertDrained: () => {} }, connector: new Map() },
     source: {},
     secrets: [],
     scripted: true,
@@ -92,6 +98,67 @@ describe("consumeRunEvents and Stop", () => {
     vi.useRealTimers();
   });
 
+  it("saves interleaved thinking and groups only repeated calls with equal arguments", async () => {
+    const { ctx: base } = await context({ status: "running" });
+    const ctx = { ...base, scripted: false };
+    const at = Date.now();
+    const args = { token: "fake-first-token", query: "calendars" };
+    const different = { ...args, token: "fake-second-token" };
+    const name = "web_search";
+    async function* runtime(): AsyncIterable<AgentRuntimeEvent> {
+      yield { type: "reasoning", phase: "start", at };
+      yield { type: "reasoning", phase: "delta", text: "Check availability." };
+      yield { type: "reasoning", phase: "end", at: at + 100 };
+      keepToolStepResult(
+        ctx.state.reply,
+        {
+          name,
+          executionId: "a",
+          durationMs: 750,
+          result: { content: [{ type: "text", text: "Monday is free" }] },
+        },
+        [],
+      );
+      yield { type: "tool", name, executionId: "a", args };
+      yield {
+        type: "tool",
+        name,
+        executionId: "b",
+        args: { query: args.query, token: args.token },
+      };
+      yield { type: "tool", name, executionId: "c", args: different };
+      yield { type: "reasoning", phase: "start", at: at + 400 };
+      yield { type: "reasoning", phase: "delta", text: "Compare the schedules." };
+      yield { type: "reasoning", phase: "end", at: at + 500 };
+      yield { type: "tool", name, executionId: "d", args: different };
+    }
+    await consumeRunEvents(ctx, runtime());
+    flushPendingTools(ctx.state.reply);
+    const {
+      blocks: [steps],
+      toolHistory,
+    } = splitToolHistory(withReplyToolOutcomes(ctx.state.reply));
+    expect(steps?.kind).toBe("steps");
+    if (steps?.kind !== "steps") throw new Error("Missing steps");
+    const [firstThought, first, repeat, changed, secondThought, last] = steps.trace ?? [];
+    expect(firstThought).toMatchObject({ kind: "thinking", text: "Check availability." });
+    expect(secondThought).toMatchObject({ kind: "thinking", text: "Compare the schedules." });
+    expect(first).toMatchObject({
+      kind: "tool",
+      outcome: "succeeded",
+      durationMs: 750,
+      groupId: first?.id,
+    });
+    expect(repeat).toMatchObject({ kind: "tool", groupId: first?.id });
+    expect(changed).toMatchObject({ kind: "tool", groupId: changed?.id });
+    expect(last).toMatchObject({ kind: "tool", groupId: last?.id });
+    expect(toolHistory?.steps[0]?.calls[0]).toMatchObject({
+      callId: first?.id,
+      result: "Monday is free",
+    });
+    expect(JSON.stringify(steps.trace)).not.toMatch(/fake-.*-token|Monday is free/);
+  });
+
   it("streams a saved secret in reasoning across deltas", async () => {
     const { ctx: base } = await context({ status: "running" });
     const ctx = { ...base, scripted: false, secrets: ["fixture-credential"] };
@@ -104,7 +171,7 @@ describe("consumeRunEvents and Stop", () => {
         phase: "delta",
         text: "Plan the next step carefully. fixture-cre",
       };
-      expect(append).toHaveBeenLastCalledWith(
+      expect(append).toHaveBeenCalledWith(
         expect.objectContaining({
           payload: {
             reasoningChanged: true,
@@ -113,14 +180,16 @@ describe("consumeRunEvents and Stop", () => {
         }),
       );
       yield { type: "reasoning", phase: "delta", text: "dential. Check the schedule." };
-      expect(append).toHaveBeenCalledTimes(1);
+      expect(append).toHaveBeenCalledTimes(2);
       vi.setSystemTime(start + 1_000);
       yield { type: "reasoning", phase: "delta", text: " Then compare the calendars." };
       yield { type: "reasoning", phase: "end", at: start + 1_500 };
     }
     await consumeRunEvents(ctx, runtime());
 
-    const payloads = append.mock.calls.map(([event]) => event.payload);
+    const payloads = append.mock.calls
+      .map(([event]) => event.payload)
+      .filter((payload) => payload.reasoningChanged === true);
     expect(payloads.map((payload) => payload.reasoningChanged)).toEqual([true, true, true]);
     const text =
       "Plan the next step carefully. fixture-credential. Check the schedule. Then compare the calendars.";
@@ -176,7 +245,7 @@ describe("consumeRunEvents and Stop", () => {
       yield { type: "reasoning", phase: "delta", text: "Compare dates." };
       yield { type: "reasoning", phase: "delta", text: " Tuesday works." };
       yield { type: "reasoning", phase: "end", at: at + 200 };
-      expect(ctx.deps.events.append).toHaveBeenLastCalledWith(
+      expect(ctx.deps.events.append).toHaveBeenCalledWith(
         expect.objectContaining({
           payload: { reasoningChanged: true, reasoning: "Compare dates. Tuesday works." },
         }),
@@ -186,6 +255,21 @@ describe("consumeRunEvents and Stop", () => {
     await consumeRunEvents(ctx, runtime());
     expect(ctx.deps.events.append).toHaveBeenLastCalledWith(
       expect.objectContaining({ payload: { reasoningChanged: true, reasoning: null } }),
+    );
+    const thinking = ctx.state.reply.trace?.[0];
+    expect(thinking).toEqual({
+      kind: "thinking",
+      id: expect.any(String),
+      text: "Compare dates. Tuesday works.",
+    });
+    expect(ctx.deps.events.append).toHaveBeenCalledWith(
+      expect.objectContaining({
+        payload: {
+          traceReasoningChanged: true,
+          phaseId: thinking?.id,
+          text: "Compare dates. Tuesday works.",
+        },
+      }),
     );
   });
 

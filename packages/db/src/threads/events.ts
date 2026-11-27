@@ -5,6 +5,7 @@ import type {
   ProductEvent,
   ReplyReasoning,
   SpaceChangeKind,
+  ToolCallDetail,
 } from "@rakazo/contracts";
 import {
   AnalyticsTrigger,
@@ -12,6 +13,7 @@ import {
   threadRunActivitySchema,
 } from "@rakazo/contracts";
 import {
+  ACTIVE_RUN_STATUSES,
   BACKGROUND_HELPER_TRIGGER,
   callIdFromClientNonce,
   isConversationalRun,
@@ -105,23 +107,25 @@ export interface AppendEventInput {
   type: ProductEvent["type"];
   payload: Record<string, unknown>;
   runId?: string;
+  /** Owner-only details stored separately from the streamed payload. */
+  toolCallDetail?: ToolCallDetail;
   /** Terminal echo after the run is already cancelled. Every other event stays rejected. */
   allowCancelledRun?: boolean;
   /** The executing attempt's lease; a superseded attempt cannot write. Never serialized. */
   lease?: RunLease;
 }
 
-export const THREAD_REASONING_EVENTS = {
-  type: "thread.meta",
-  payload: { path: ["reasoningChanged"], equals: true },
-} satisfies Prisma.EventWhereInput;
+export const THREAD_REASONING_EVENTS = [
+  { type: "thread.meta", payload: { path: ["reasoningChanged"], equals: true } },
+  { type: "thread.meta", payload: { path: ["traceReasoningChanged"], equals: true } },
+] satisfies Prisma.EventWhereInput[];
 
 /** Unrelated thread metadata must survive transient cleanup. */
 export function transientRunEventsWhere(): Prisma.EventWhereInput {
   return {
     OR: [
       { type: "thread.progress" },
-      THREAD_REASONING_EVENTS,
+      ...THREAD_REASONING_EVENTS,
       { type: "thread.meta", payload: { equals: { activity: { thinking: true } } } },
       { type: "thread.meta", payload: { equals: { activity: { thinking: false } } } },
     ],
@@ -717,7 +721,12 @@ async function insertEventAlone(prisma: PrismaClient, input: AppendEventInput) {
     botId: input.botId,
     payload,
   };
-  const stored = (await contentEncryptionOf(prisma)?.sealRow("Event", row)) ?? row;
+  const privateRow = { ...row, toolCallDetail: sanitizeJsonValue(input.toolCallDetail) };
+  const stored = (await contentEncryptionOf(prisma)?.sealRow("Event", privateRow)) ?? privateRow;
+  const storedDetail = stored.toolCallDetail
+    ? Prisma.sql`CASE WHEN (SELECT status FROM run) IN (${Prisma.join(ACTIVE_RUN_STATUSES)})
+        THEN ${JSON.stringify(stored.toolCallDetail)}::jsonb END`
+    : Prisma.sql`NULL`;
   const runWritable =
     input.type === "run.cancelled"
       ? Prisma.sql`r.status = 'cancelled'`
@@ -750,14 +759,14 @@ async function insertEventAlone(prisma: PrismaClient, input: AppendEventInput) {
       RETURNING "nextEventSeq" - 1 AS seq
     ),
     run AS (
-      SELECT r.id FROM runs r CROSS JOIN next
+      SELECT r.id, r.status FROM runs r CROSS JOIN next
       WHERE r.id = ${runId ?? null} AND ${runWritable}
       FOR SHARE OF r
     ),
     inserted AS (
-      INSERT INTO events (id, "spaceId", "threadId", "botId", seq, type, payload, "runId")
+      INSERT INTO events (id, "spaceId", "threadId", "botId", seq, type, payload, "runId", "toolCallDetail")
       SELECT ${row.id}, ${input.spaceId}, ${input.threadId}, ${input.botId}, next.seq,
-        ${input.type}, ${JSON.stringify(stored.payload)}::jsonb, ${runId ?? null}
+        ${input.type}, ${JSON.stringify(stored.payload)}::jsonb, ${runId ?? null}, ${storedDetail}
       FROM next
       WHERE ${runId ? Prisma.sql`EXISTS (SELECT 1 FROM run)` : Prisma.sql`TRUE`}
       RETURNING id, seq, "createdAt", "runId"
@@ -994,9 +1003,13 @@ export async function appendEventInTransaction(
   // run.cancelled is appended after the run row already reads cancelled, so it
   // asserts the terminal status where every other event needs a writable run.
   let firstResponseAt: Date | null | undefined;
+  let toolCallDetail: ToolCallDetail | undefined;
   if (input.type === "run.cancelled") {
     await assertRunIsCancelled(tx, input.runId);
   } else {
+    if (input.toolCallDetail && input.runId && !input.lease) {
+      await tx.$queryRaw`SELECT id FROM runs WHERE id = ${input.runId} FOR SHARE`;
+    }
     const run = await assertRunCanWriteHistory(tx, input.runId, {
       allowCancelled: input.allowCancelledRun,
       lease: input.lease,
@@ -1005,6 +1018,9 @@ export async function appendEventInTransaction(
       throw new RunHistoryWriteError();
     }
     firstResponseAt = run?.firstResponseAt;
+    if (input.toolCallDetail && ACTIVE_RUN_STATUSES.some((status) => status === run?.status)) {
+      toolCallDetail = input.toolCallDetail;
+    }
   }
   // Unpaired UTF-16 surrogates (e.g. a split emoji high half) are invalid JSON for Postgres.
   const payload = sanitizeJsonValue(input.payload);
@@ -1017,6 +1033,7 @@ export async function appendEventInTransaction(
       type: input.type,
       payload: payload as Prisma.InputJsonValue,
       runId: input.runId,
+      toolCallDetail,
     },
   });
   const firstResponse = Boolean(

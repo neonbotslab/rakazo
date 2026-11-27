@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import type { AgentRuntimeEvent } from "@rakazo/adapter-kit";
 import type { ReplyReasoning } from "@rakazo/contracts";
 import { MAX_REPLY_REASONING_BYTES } from "@rakazo/contracts";
@@ -31,6 +32,8 @@ export function createRunReasoning(ctx: RunContext) {
     run.trigger !== "bot_message";
   let phase:
     | {
+        id: string;
+        traceIndex: number;
         startedAt: number;
         lastUpdateAt: number;
         text: string;
@@ -39,22 +42,33 @@ export function createRunReasoning(ctx: RunContext) {
       }
     | undefined;
   let published: string | null = null;
+  let publishedPhaseId: string | undefined;
   const remainingBytes = () =>
     MAX_REPLY_REASONING_BYTES - (reply.reasoning ? byteLength(reply.reasoning.text) + 2 : 0);
 
-  const publish = async (text: string | null) => {
-    if (text === published) return;
+  const publish = async (text: string | null, phaseId?: string) => {
+    if (text === published && phaseId === publishedPhaseId) return;
     try {
-      await deps.events.append({
+      const target = {
         spaceId: run.spaceId,
         threadId: run.threadId,
         botId: ctx.bot.id,
         runId,
-        type: "thread.meta",
+        type: "thread.meta" as const,
         lease: { owner: ctx.workerId, fence: ctx.fence },
-        payload: { reasoningChanged: true, reasoning: text },
-      });
+      };
+      if (text !== published)
+        await deps.events.append({
+          ...target,
+          payload: { reasoningChanged: true, reasoning: text },
+        });
+      if (phaseId)
+        await deps.events.append({
+          ...target,
+          payload: { traceReasoningChanged: true, phaseId, text },
+        });
       published = text;
+      publishedPhaseId = phaseId;
     } catch (error) {
       if (!(error instanceof RunHistoryWriteError)) throw error;
     }
@@ -68,8 +82,9 @@ export function createRunReasoning(ctx: RunContext) {
   };
 
   const discard = async () => {
+    const phaseId = phase?.id === publishedPhaseId ? phase?.id : undefined;
     phase = undefined;
-    await publish(null);
+    await publish(null, phaseId);
   };
 
   return {
@@ -77,7 +92,10 @@ export function createRunReasoning(ctx: RunContext) {
     async consume(event: ReasoningEvent) {
       if (!enabled) return;
       if (event.phase === "start") {
+        if (phase) await discard();
         phase = {
+          id: randomUUID(),
+          traceIndex: reply.trace?.length ?? 0,
           startedAt: event.at,
           lastUpdateAt: Number.NEGATIVE_INFINITY,
           text: "",
@@ -95,11 +113,12 @@ export function createRunReasoning(ctx: RunContext) {
           const text = displayText(phase.text, remainingBytes());
           if (text && text !== published) {
             phase.lastUpdateAt = now;
-            await publish(text);
+            await publish(text, phase.id);
           }
         }
       } else if (phase && event.phase === "end") {
         if (!phase.capped) append(phase.utf16.finish());
+        const { id, traceIndex } = phase;
         const text = displayText(phase.text, remainingBytes());
         if (text) {
           const previous = reply.reasoning;
@@ -110,9 +129,11 @@ export function createRunReasoning(ctx: RunContext) {
             endedAt: new Date(endedAt).toISOString(),
             durationMs: (previous?.durationMs ?? 0) + endedAt - phase.startedAt,
           };
+          reply.trace ??= [];
+          reply.trace.splice(traceIndex, 0, { kind: "thinking", id, text });
         }
         phase = undefined;
-        if (text) await publish(text);
+        if (text) await publish(text, id);
       }
     },
   };

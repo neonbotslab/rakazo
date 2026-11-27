@@ -1,5 +1,6 @@
 import * as z from "zod";
 import { Id } from "../ids.js";
+import { TraceThinkingPayloadSchema } from "./reply-trace.js";
 import { ReasoningTextSchema } from "./thread-message.js";
 
 export const ProductEventType = z.enum([
@@ -76,6 +77,7 @@ export function hasThinkingActivityMarker(payload: Record<string, unknown>): pay
 export function threadRunActivitySchema(payload: Record<string, unknown>) {
   if (hasThinkingActivityMarker(payload)) return ThreadActivityPayloadSchema;
   if (payload.reasoningChanged === true) return ThreadReasoningPayloadSchema;
+  if (payload.traceReasoningChanged === true) return TraceThinkingPayloadSchema;
 }
 
 export const ProductEventSchema = z

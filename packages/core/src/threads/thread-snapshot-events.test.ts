@@ -20,6 +20,91 @@ import {
 } from "./thread-snapshot-events.js";
 
 describe("thread event reduction", () => {
+  it("keeps the trace in start order when a tool finishes before it is called", () => {
+    const initial = { ...snapshot([]), cursor: 0 };
+    const base = {
+      id: "event",
+      threadId: initial.threadId,
+      runId: "run-1",
+      botId: "bot-1",
+      createdAt: "2026-11-26T00:00:00.000Z",
+    };
+    const firstThought = { kind: "thinking", id: "phase-1", text: "Check the first option." };
+    const tool = {
+      kind: "tool",
+      id: "call",
+      groupId: "call",
+      label: "Search the web",
+      outcome: "running",
+    };
+    const events = [
+      {
+        ...base,
+        seq: 1,
+        type: "thread.meta",
+        payload: { traceReasoningChanged: true, phaseId: firstThought.id, text: firstThought.text },
+      },
+      {
+        ...base,
+        seq: 2,
+        type: "agent.tool.completed",
+        payload: {
+          traceCall: true,
+          toolStepId: tool.id,
+          outcome: "error",
+          durationMs: 80,
+          error: "private details",
+        },
+      },
+      {
+        ...base,
+        seq: 3,
+        type: "agent.tool.called",
+        payload: { name: "web_search", toolStepId: tool.id, traceTool: tool },
+      },
+      {
+        ...base,
+        seq: 4,
+        type: "thread.meta",
+        payload: {
+          traceReasoningChanged: true,
+          phaseId: "discarded",
+          text: "This approach is no longer relevant.",
+        },
+      },
+      {
+        ...base,
+        seq: 5,
+        type: "thread.meta",
+        payload: { traceReasoningChanged: true, phaseId: "discarded", text: null },
+      },
+      {
+        ...base,
+        seq: 6,
+        type: "thread.meta",
+        payload: {
+          traceReasoningChanged: true,
+          phaseId: "phase-2",
+          text: "Check the backup option.",
+        },
+      },
+    ];
+    const live = events.reduce<ThreadSnapshot | null>(reduceThreadSnapshot, initial);
+    const projection = projectThreadMessages(events);
+    expect(live?.liveTrace).toEqual({
+      [base.runId]: [
+        firstThought,
+        { ...tool, outcome: "failed", durationMs: 80 },
+        { kind: "thinking", id: "phase-2", text: "Check the backup option." },
+      ],
+    });
+    expect(projection.liveTrace).toEqual(live?.liveTrace);
+    expect(projection.liveTracePending).toBeUndefined();
+    expect(
+      reduceThreadSnapshot(live, { ...base, seq: 7, type: "run.completed" })?.liveTrace,
+    ).toBeUndefined();
+  });
+
   it("shows the latest reasoning after reconnect and replaces it with the saved reply disclosure", () => {
     const initial = { ...snapshot([]), cursor: 0 };
     const active = {

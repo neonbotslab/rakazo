@@ -29,6 +29,7 @@ import {
   threadSendWithRoutinesInput,
   threadTarget,
 } from "./thread-send.js";
+import { SavedToolCallSelector, ToolCallDetailSchema } from "./tool-call-detail.js";
 
 export const threadsRpc = {
   threads: {
@@ -57,6 +58,12 @@ export const threadsRpc = {
     toolStepPreviews: oc
       .input(threadTarget.safeExtend({ messageId: Id }))
       .output(ToolStepPreviewsSchema.nullable()),
+    toolCallDetail: oc
+      .input(threadTarget.safeExtend({ messageId: Id }).and(SavedToolCallSelector))
+      .output(ToolCallDetailSchema.nullable()),
+    liveToolCallDetail: oc
+      .input(threadTarget.safeExtend({ runId: Id, callId: Id }))
+      .output(ToolCallDetailSchema.nullable()),
     subscribe: oc
       .input(threadTarget.safeExtend({ cursor: z.number().int().min(-1) }))
       .output(eventIterator(ProductEventSchema)),
