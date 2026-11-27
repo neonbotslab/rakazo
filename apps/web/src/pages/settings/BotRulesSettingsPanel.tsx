@@ -34,13 +34,7 @@ export type BotRulesNavigation = {
   closeHistory: () => boolean;
 };
 
-export function BotRulesSettingsPanel({
-  navigation,
-  timezone,
-}: {
-  navigation: Ref<BotRulesNavigation>;
-  timezone: string | null;
-}) {
+export function BotRulesSettingsPanel({ navigation }: { navigation: Ref<BotRulesNavigation> }) {
   const { t, i18n } = useLingui();
   const id = useId();
   const editor = useOwnerRulesEditor();
@@ -119,7 +113,6 @@ export function BotRulesSettingsPanel({
               {historyOpen ? (
                 <VersionHistory
                   versions={editor.versions}
-                  timezone={timezone}
                   canRestore={!editor.conflict && !editor.pending}
                   restore={(versionId) => {
                     editor.restore(versionId);
@@ -230,6 +223,7 @@ export function BotRulesSettingsPanel({
         ) : null}
       </div>
       <Disclosure
+        hiddenUntilFound={false}
         summary={
           <>
             <Code aria-hidden="true" className="size-4 text-muted-foreground" />
@@ -258,7 +252,11 @@ export function BotRulesSettingsPanel({
           if (!open) editor.keepEditing();
         }}
       >
-        <AlertDialogContent initialFocus={keepEditingButton} finalFocus={textarea}>
+        <AlertDialogContent
+          forceRenderBackdrop
+          initialFocus={keepEditingButton}
+          finalFocus={textarea}
+        >
           <AlertDialogHeader>
             <AlertDialogTitle>
               <Trans>Discard unsaved changes?</Trans>
@@ -285,14 +283,12 @@ export function BotRulesSettingsPanel({
 
 function VersionHistory({
   versions,
-  timezone,
   canRestore,
   restore,
   loadMore,
   loadingMore,
 }: {
   versions: OwnerRulesVersion[];
-  timezone: string | null;
   canRestore: boolean;
   restore: (id: number) => void;
   loadMore?: () => void;
@@ -303,7 +299,6 @@ function VersionHistory({
   const dateFormat = new Intl.DateTimeFormat(i18n.locale || "en", {
     dateStyle: "medium",
     timeStyle: "short",
-    timeZone: timezone ?? undefined,
   });
   return (
     <div className="mb-3 rounded-lg border border-border p-1">

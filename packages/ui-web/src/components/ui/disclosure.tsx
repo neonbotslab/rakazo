@@ -7,11 +7,12 @@ import { cn } from "@rakazo/ui-web/lib/utils";
 import { ChevronDown } from "lucide-react";
 import type * as React from "react";
 
-/** A shared animated fold-out that preserves its children's state while closed. */
+/** An animated fold-out that preserves its children's state while closed by default. */
 function Disclosure({
   summary,
   summaryClassName,
   contentClassName,
+  hiddenUntilFound = true,
   className,
   children,
   ...props
@@ -19,6 +20,7 @@ function Disclosure({
   summary: React.ReactNode;
   summaryClassName?: string;
   contentClassName?: string;
+  hiddenUntilFound?: React.ComponentProps<typeof CollapsibleContent>["hiddenUntilFound"];
   className?: string;
   children: React.ReactNode;
 }) {
@@ -36,7 +38,7 @@ function Disclosure({
           className="size-4 shrink-0 text-muted-foreground transition-transform group-data-open/disclosure:rotate-180 motion-reduce:transition-none"
         />
       </CollapsibleTrigger>
-      <CollapsibleContent hiddenUntilFound className={contentClassName}>
+      <CollapsibleContent hiddenUntilFound={hiddenUntilFound} className={contentClassName}>
         {children}
       </CollapsibleContent>
     </Collapsible>

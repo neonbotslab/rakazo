@@ -588,9 +588,7 @@ export function SettingsOverlay({
                       onBusyChange={setMemoryBusy}
                     />
                   ) : null}
-                  {botRules ? (
-                    <BotRulesSettingsPanel navigation={botRulesNavigation} timezone={timezone} />
-                  ) : null}
+                  {botRules ? <BotRulesSettingsPanel navigation={botRulesNavigation} /> : null}
                   {section === "voice" ? (
                     <VoiceSettingsOverlay
                       embedded
