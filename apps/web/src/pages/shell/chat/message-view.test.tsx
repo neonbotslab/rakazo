@@ -1,5 +1,8 @@
 // @vitest-environment jsdom
+import { setupI18n } from "@lingui/core";
 import type { ThreadMessage } from "@rakazo/contracts";
+import { flush } from "@rakazo/core/test-async";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { ComponentProps, ReactNode } from "react";
 import { act } from "react";
 import type { Root } from "react-dom/client";
@@ -13,23 +16,30 @@ const skills = vi.hoisted(() => ({
   save: vi.fn(async () => ({})),
   testRun: vi.fn(async () => ({ runId: "run" })),
 }));
-vi.mock("../../../lib/query/rpc", () => ({ rpc: { skills, artifacts: { get: vi.fn() } } }));
-
-vi.mock("@lingui/core/macro", () => ({
-  plural: (count: number, forms: { one: string; other: string }) =>
-    (count === 1 ? forms.one : forms.other).replace("#", String(count)),
+const toolStepPreviews = vi.hoisted(() => vi.fn());
+vi.mock("../../../lib/query/rpc", async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
+  createSpaceRpc: () => ({ threads: { toolStepPreviews } }),
+  rpc: { skills, artifacts: { get: vi.fn() } },
 }));
 
 vi.mock("@lingui/react/macro", () => ({
   Trans: ({ children }: { children: ReactNode }) => children,
+  Plural: ({ value, one, other }: { value: number; one: string; other: string }) =>
+    (value === 1 ? one : other).replace("#", String(value)),
   useLingui: () => ({
+    i18n,
     t: (strings: TemplateStringsArray, ...values: unknown[]) => String.raw(strings, ...values),
   }),
 }));
 
+const i18n = setupI18n({ locale: "en" });
 let container: HTMLDivElement;
 let root: Root;
+let queries: QueryClient;
 beforeEach(() => {
+  queries = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  toolStepPreviews.mockReset();
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   window.matchMedia ??= ((query: string) => ({
     matches: false,
@@ -43,6 +53,7 @@ beforeEach(() => {
 });
 afterEach(() => {
   act(() => root.unmount());
+  queries.clear();
   container.remove();
   vi.unstubAllGlobals();
 });
@@ -58,6 +69,10 @@ const planner = (status: "created" | "archived" | "deleted" = "created") => ({
   status,
 });
 
+function renderWithQueries(child: ReactNode) {
+  root.render(<QueryClientProvider client={queries}>{child}</QueryClientProvider>);
+}
+
 function renderView(
   role: ThreadMessage["role"],
   blocks: ThreadMessage["blocks"],
@@ -72,7 +87,7 @@ function renderView(
     blocks,
   };
   act(() =>
-    root.render(
+    renderWithQueries(
       <MessageView
         rpc={rpc}
         artifactTarget={{ botId: "parent" }}
@@ -113,6 +128,52 @@ function renderMessage(
   act(() => mention.click());
   return { mention, onOpenBot };
 }
+
+it("loads previews when the existing disclosure opens and matches them to each tool block", async () => {
+  const blocks: ThreadMessage["blocks"] = [
+    { kind: "steps", steps: [{ label: "Read notes", count: 1 }] },
+    { kind: "text", text: "Done." },
+    { kind: "steps", steps: [{ label: "Search notes", count: 1 }] },
+  ];
+  toolStepPreviews.mockResolvedValue({
+    steps: [
+      { tool: "read_file", output: "First result" },
+      { tool: "search", output: "Second result" },
+    ],
+  });
+  renderView("bot", blocks, {
+    showToolActivity: true,
+    message: {
+      id: "message",
+      threadId: "thread",
+      seq: 1,
+      role: "bot",
+      createdAt: new Date().toISOString(),
+      blocks,
+      canInspectToolSteps: true,
+    },
+  });
+  expect(toolStepPreviews).not.toHaveBeenCalled();
+  const disclosures = container.querySelectorAll<HTMLButtonElement>(
+    '[data-testid="tool-activity"] button[aria-expanded]',
+  );
+  expect(disclosures).toHaveLength(2);
+  await act(async () => {
+    disclosures.item(1).click();
+    await flush();
+  });
+  await act(async () => {
+    await flush();
+  });
+  expect(toolStepPreviews).toHaveBeenCalledTimes(1);
+  const titles = [...container.querySelectorAll('[data-testid="tool-rows"] [title]')].map((label) =>
+    label.getAttribute("title"),
+  );
+  expect(titles).toEqual([
+    "read_file\n1 succeeded\nOutput: First result",
+    "search\n1 succeeded\nOutput: Second result",
+  ]);
+});
 
 it("keeps a received peer marker off the user's side while user replies align to the end", () => {
   renderView("user", [
@@ -200,7 +261,7 @@ it("keeps an edit made after a save when the saved status arrives late", async (
     status: "draft" as const,
   };
   const render = (block: typeof draft | (Omit<typeof draft, "status"> & { status: "saved" })) =>
-    root.render(
+    renderWithQueries(
       <MessageView
         rpc={rpc}
         artifactTarget={{ botId: "parent" }}

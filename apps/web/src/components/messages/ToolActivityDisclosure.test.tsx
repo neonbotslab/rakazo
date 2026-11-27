@@ -8,10 +8,15 @@ import { describe, expect, it, vi } from "vitest";
 // The macro compiles away in the app build; tests run the source, so expand the
 // plural by hand to assert the singular vs plural English forms.
 vi.mock("@lingui/react/macro", () => ({
+  useLingui: () => ({ i18n }),
   Trans: ({ children }: { children: unknown }) => children,
   Plural: ({ value, one, other }: { value: number; one: string; other: string }) =>
     (value === 1 ? one : other).replace("#", String(value)),
 }));
+
+import { setupI18n } from "@lingui/core";
+
+const i18n = setupI18n({ locale: "en" });
 
 /** The words a reader sees, with each element's text as its own word. */
 const visibleText = (html: string) =>
@@ -142,6 +147,23 @@ describe("ToolActivityDisclosure", () => {
 });
 
 describe("ToolSteps", () => {
+  it("renders the preview as a native title on the existing step label", () => {
+    const html = renderToStaticMarkup(
+      <ToolSteps
+        steps={[{ label: "Read notes", count: 1 }]}
+        previews={[{ tool: "read_file", input: "notes.txt", output: "<Sample>" }]}
+      />,
+    );
+    const container = document.createElement("div");
+    container.innerHTML = html;
+    const label = container.querySelector("[title]");
+    expect(label?.textContent).toBe("Read notes");
+    expect(label?.getAttribute("title")).toBe(
+      "read_file\n1 succeeded\nInput: notes.txt\nOutput: <Sample>",
+    );
+    expect(container.querySelector("button, [role], [tabindex]")).toBeNull();
+  });
+
   it("labels only the step whose result a plugin changed", () => {
     const html = renderToStaticMarkup(
       <StandaloneToolActivity
@@ -180,7 +202,7 @@ describe("ToolSteps", () => {
   it("exposes the full label as the title of a truncated step", () => {
     const label = "Read apps/web/src/components/messages/ToolActivityDisclosure.tsx";
     const html = renderToStaticMarkup(<ToolSteps steps={[{ label, count: 2 }]} />);
-    expect(html).toContain(`title="${label}"`);
+    expect(html).toContain(`title="${label} ×2\nDone"`);
   });
 
   it("lists every step when not limited or when the list fits", () => {

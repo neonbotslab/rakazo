@@ -12,8 +12,9 @@ import type {
 import type { ChildBotBlock, PeerExchange } from "@rakazo/core";
 import { isPeerReceiptBlocks, isToolActivityBlock, otherAuthor } from "@rakazo/core";
 import { BotAvatar, Button, cn, resolvePersonaColorDef } from "@rakazo/ui-web";
+import { useQuery } from "@tanstack/react-query";
 import { UserRound } from "lucide-react";
-import { memo, useCallback, useMemo } from "react";
+import { memo, useCallback, useMemo, useState } from "react";
 import { CollaborationMarker } from "../../../components/ai/CollaborationMarker";
 import { ComputerCard } from "../../../components/computers/ComputerCard";
 import { ArtifactFileCard } from "../../../components/messages/ArtifactFileCard";
@@ -37,11 +38,13 @@ import {
   renderableMessageBlocks,
   shouldRenderToolCard,
   toolStepCount,
+  toolStepPreviewsByBlock,
 } from "../../../lib/chat/tool-activity-view";
 import { messageProviderLabel } from "../../../lib/integrations/messaging";
 import type { ArtifactTarget } from "../../../lib/pages/artifact-open";
 import type { PageBlock } from "../../../lib/pages/page-cards";
 import { useOpenPage } from "../../../lib/pages/pages";
+import { useSpaceQueries } from "../../../lib/query/query";
 import type { createSpaceRpc } from "../../../lib/query/rpc";
 import type { ImportSetupTarget } from "../bots/import-setup-card";
 import { ImportSetupCard } from "../bots/import-setup-card";
@@ -186,6 +189,23 @@ export const MessageView = memo(function MessageView({
     </div>
   ) : null;
   const visibleNarrationBlocks = renderableMessageBlocks(blocks, showToolActivity);
+  const canReadToolSteps = !isLive && showToolActivity && message.canInspectToolSteps;
+  const [requested, setRequested] = useState(false);
+  const queries = useSpaceQueries();
+  const { data: toolStepPreviews } = useQuery({
+    ...queries.threads.toolStepPreviews.queryOptions({
+      input: { ...artifactTarget, messageId: message.id },
+    }),
+    enabled: Boolean(canReadToolSteps && requested),
+    staleTime: Infinity,
+    refetchOnMount: false,
+  });
+  const previews = canReadToolSteps ? toolStepPreviews?.steps : undefined;
+  const previewsByBlock = toolStepPreviewsByBlock(
+    isNarration ? visibleNarrationBlocks : blocks,
+    previews,
+  );
+  const onOpenToolSteps = !isLive ? () => setRequested(true) : undefined;
   const renderMention = useCallback(
     (id: string) => {
       const block = mentions?.find((bot) => bot.botId === id);
@@ -274,7 +294,12 @@ export const MessageView = memo(function MessageView({
         <>
           {messageContext}
           <div className="relative">
-            <ToolOnlyNarration blocks={visibleNarrationBlocks} live={isLive} />
+            <ToolOnlyNarration
+              blocks={visibleNarrationBlocks}
+              live={isLive}
+              previews={previews}
+              onOpen={onOpenToolSteps}
+            />
             {hoverActions}
           </div>
         </>
@@ -298,11 +323,14 @@ export const MessageView = memo(function MessageView({
                       live={isLive}
                       stepCount={toolStepCount(block.steps)}
                       durationMs={block.durationMs}
+                      onOpen={onOpenToolSteps}
                     >
                       <ToolSteps
                         steps={block.steps}
                         currentIndex={isLive ? block.steps.length - 1 : undefined}
                         limit={isLive ? LIVE_TOOL_STEP_WINDOW : undefined}
+                        previews={previewsByBlock[i]}
+                        durationMs={block.durationMs}
                       />
                     </ToolActivityDisclosure>
                   );
@@ -364,6 +392,8 @@ export const MessageView = memo(function MessageView({
                 steps={block.steps}
                 stepCount={toolStepCount(block.steps)}
                 durationMs={block.durationMs}
+                previews={previewsByBlock[i]}
+                onOpen={onOpenToolSteps}
               />
             );
           }
