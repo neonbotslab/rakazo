@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import type { HostPluginTaskCard, ThreadMessage } from "@rakazo/contracts";
 import { foldPeerReplies } from "@rakazo/core";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { ComponentProps, ReactNode, RefObject } from "react";
 import { act } from "react";
 import { flushSync } from "react-dom";
@@ -24,11 +25,10 @@ vi.mock("@lingui/core/macro", () => ({
     (count === 1 ? forms.one : forms.other).replace("#", String(count)),
 }));
 
-vi.mock("../../../lib/query/rpc", () => ({ rpc: {} }));
-
 let container: HTMLDivElement;
 let root: Root;
 let scrollRef: RefObject<HTMLDivElement | null>;
+let queries: QueryClient;
 
 beforeEach(() => {
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
@@ -43,12 +43,14 @@ beforeEach(() => {
   container = document.createElement("div");
   document.body.append(container);
   root = createRoot(container);
+  queries = new QueryClient();
   scrollRef = { current: container };
 });
 
 afterEach(() => {
   window.getSelection()?.removeAllRanges();
   act(() => root.unmount());
+  queries.clear();
   container.remove();
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
@@ -130,8 +132,12 @@ function baseProps(messages: readonly ThreadMessage[]): ComponentProps<typeof Tr
   };
 }
 
+function renderWithQueries(child: ReactNode) {
+  root.render(<QueryClientProvider client={queries}>{child}</QueryClientProvider>);
+}
+
 function render(props: ComponentProps<typeof Transcript>) {
-  act(() => root.render(<Transcript {...props} />));
+  act(() => renderWithQueries(<Transcript {...props} />));
 }
 
 it("shows readable reasoning in place of the thinking placeholder", () => {
@@ -255,7 +261,7 @@ it("shares the armed quote action with the pill and replaces quotes on new selec
     });
     return <Transcript {...props} onQuoteShortcutChange={register} />;
   }
-  act(() => root.render(<Harness />));
+  act(() => renderWithQueries(<Harness />));
   const press = () => {
     const event = new KeyboardEvent("keydown", {
       key: "L",
@@ -296,7 +302,7 @@ it("shares the armed quote action with the pill and replaces quotes on new selec
 it("keeps the quote draft for an Escape another handler consumed", () => {
   Range.prototype.getBoundingClientRect = () =>
     ({ top: 100, bottom: 120, left: 100, width: 40 }) as DOMRect;
-  act(() => root.render(<Transcript {...baseProps(history())} />));
+  render(baseProps(history()));
   selectText(container.querySelector('[data-message-id="m2"]')!, "cabins near");
   const pill = () => document.querySelector("[data-quote-selection]");
   expect(pill()).not.toBeNull();
@@ -466,7 +472,7 @@ it("drops the quote pill when an edit removes only one end of the selection", as
 /** Renders outside act, so the first commit is visible before the transition mounts the rest. */
 async function renderFirstFrame(props: ComponentProps<typeof Transcript>) {
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", false);
-  flushSync(() => root.render(<Transcript {...props} />));
+  flushSync(() => renderWithQueries(<Transcript {...props} />));
   const first = [...container.querySelectorAll("[data-message-id]")].map((row) =>
     row.getAttribute("data-message-id"),
   );
@@ -503,7 +509,7 @@ it("does not spend the first frame on rows hidden tool activity would leave blan
   });
   const props = { ...baseProps([...shown, ...tools]), running: false };
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", false);
-  flushSync(() => root.render(<Transcript {...props} />));
+  flushSync(() => renderWithQueries(<Transcript {...props} />));
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   expect(
     [...container.querySelectorAll("[data-message-id]")].map((row) =>

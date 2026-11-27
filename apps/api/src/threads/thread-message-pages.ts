@@ -9,7 +9,12 @@ import {
 } from "@rakazo/core";
 import { messageReplyPreview } from "@rakazo/core/message-quote";
 import type { Prisma, PrismaClient } from "@rakazo/db";
-import { loadMessageAuthors, readJsonColumn, storedMessageBlocks } from "@rakazo/db";
+import {
+  loadMessageAuthors,
+  ownToolStepMessageRuns,
+  readJsonColumn,
+  storedMessageBlocks,
+} from "@rakazo/db";
 
 type MessageDb = PrismaClient | Prisma.TransactionClient;
 
@@ -29,6 +34,7 @@ export async function loadMessagePage(
   around?: { messageId?: string; seq?: number },
   includePeerRuns = false,
   includePeerReceipts = false,
+  viewerId?: string,
 ): Promise<ThreadMessagePage> {
   if (around) {
     let targetSeq = around.seq;
@@ -65,7 +71,7 @@ export async function loadMessagePage(
       const messages = includePeerRuns ? rows : await withoutPeerRunMessages(prisma, rows);
       return {
         threadId,
-        messages: await toThreadMessages(prisma, messages),
+        messages: await toThreadMessages(prisma, messages, threadId, viewerId),
         olderCursor: older ? (first?.seq ?? null) : null,
         coveredThroughSeq,
       };
@@ -95,7 +101,7 @@ export async function loadMessagePage(
     if (hasSubstantive || includePeerReceipts || !hasOlder || includePeerRuns) {
       return {
         threadId,
-        messages: await toThreadMessages(prisma, visibleRows),
+        messages: await toThreadMessages(prisma, visibleRows, threadId, viewerId),
         olderCursor: hasOlder ? (pageRows[0]?.seq ?? null) : null,
       };
     }
@@ -285,12 +291,33 @@ type MessageRow = {
   createdAt: Date;
 };
 
-async function toThreadMessages(prisma: MessageDb, rows: MessageRow[]): Promise<ThreadMessage[]> {
+async function toThreadMessages(
+  prisma: MessageDb,
+  rows: MessageRow[],
+  threadId: string,
+  viewerId?: string,
+): Promise<ThreadMessage[]> {
   const authors = await loadMessageAuthors(
     prisma,
     rows.flatMap((row) => [row.authorUserId, row.replyTo?.authorUserId]),
   );
-  return rows.map((row) => toThreadMessage(row, authors));
+  const messages = rows.map((row) => toThreadMessage(row, authors));
+  if (!viewerId) return messages;
+  const toolReplies = messages.filter(
+    (message) =>
+      message.role === "bot" &&
+      message.runId &&
+      message.blocks.some((block) => block.kind === "steps"),
+  );
+  const owned = await ownToolStepMessageRuns(
+    prisma,
+    { threadId, userId: viewerId },
+    toolReplies.map(({ id }) => id),
+  );
+  for (const message of toolReplies) {
+    if (owned.has(message.id)) message.canInspectToolSteps = true;
+  }
+  return messages;
 }
 
 function toThreadMessage(row: MessageRow, authors: Map<string, MessageAuthor>): ThreadMessage {

@@ -1,6 +1,7 @@
-import { Plural, Trans } from "@lingui/react/macro";
+import { Plural, Trans, useLingui } from "@lingui/react/macro";
 import { ChatMarkdown } from "@rakazo/chat-ui/web";
-import type { ThreadMessage } from "@rakazo/contracts";
+import type { ThreadMessage, ToolStepPreview } from "@rakazo/contracts";
+import type { ToolStep } from "@rakazo/core";
 import { formatCompactDuration } from "@rakazo/core";
 import {
   Collapsible,
@@ -10,9 +11,8 @@ import {
 import { ChevronRight } from "lucide-react";
 import type { ReactNode } from "react";
 import { Fragment } from "react";
-import { toolStepCount } from "../../lib/chat/tool-activity-view";
-
-type ToolStep = Extract<ThreadMessage["blocks"][number], { kind: "steps" }>["steps"][number];
+import { toolStepCount, toolStepPreviewsByBlock } from "../../lib/chat/tool-activity-view";
+import { toolStepTitle } from "../../lib/chat/tool-step-title";
 
 /** While a run is live, only the most recent steps are listed so a long run does not push the chat down. */
 export const LIVE_TOOL_STEP_WINDOW = 6;
@@ -21,12 +21,17 @@ export function ToolSteps({
   steps,
   currentIndex,
   limit,
+  previews,
+  durationMs,
 }: {
   steps: readonly ToolStep[];
   currentIndex?: number;
   /** Show only the last `limit` steps, with a count of the earlier ones above them. */
   limit?: number;
+  previews?: readonly (ToolStepPreview | null)[];
+  durationMs?: number;
 }) {
+  const { i18n } = useLingui();
   const hidden = limit !== undefined && steps.length > limit ? steps.length - limit : 0;
   const shown = hidden > 0 ? steps.slice(hidden) : steps;
   return (
@@ -61,7 +66,7 @@ export function ToolSteps({
                 className={`min-w-0 flex-1 truncate text-body-sm ${
                   isCurrent ? "text-foreground" : "text-muted-foreground"
                 }`}
-                title={step.label}
+                title={toolStepTitle(i18n, step, isCurrent, previews?.[index], durationMs)}
               >
                 {step.label}
                 {step.count > 1 ? ` ×${step.count}` : ""}
@@ -87,11 +92,13 @@ export function ToolActivityDisclosure({
   live,
   stepCount,
   durationMs,
+  onOpen,
   children,
 }: {
   live: boolean;
   stepCount: number;
   durationMs?: number;
+  onOpen?: () => void;
   children: ReactNode;
 }) {
   const duration = formatCompactDuration(durationMs);
@@ -100,6 +107,9 @@ export function ToolActivityDisclosure({
     <Collapsible
       key={live ? "working" : "actions"}
       defaultOpen={live}
+      onOpenChange={(open) => {
+        if (open) onOpen?.();
+      }}
       data-testid="tool-activity"
       data-live={live || undefined}
       className="group"
@@ -138,20 +148,31 @@ export function StandaloneToolActivity({
   steps,
   stepCount,
   durationMs,
+  previews,
+  onOpen,
 }: {
   live: boolean;
   steps: readonly ToolStep[];
   stepCount: number;
   durationMs?: number;
+  previews?: readonly (ToolStepPreview | null)[];
+  onOpen?: () => void;
 }) {
   return (
     <div className="flex justify-start" dir="ltr" data-testid="tool-activity-line">
       <div className="max-w-full min-w-0 ps-1">
-        <ToolActivityDisclosure live={live} stepCount={stepCount} durationMs={durationMs}>
+        <ToolActivityDisclosure
+          live={live}
+          stepCount={stepCount}
+          durationMs={durationMs}
+          onOpen={onOpen}
+        >
           <ToolSteps
             steps={steps}
             currentIndex={live ? steps.length - 1 : undefined}
             limit={live ? LIVE_TOOL_STEP_WINDOW : undefined}
+            previews={previews}
+            durationMs={durationMs}
           />
         </ToolActivityDisclosure>
       </div>
@@ -163,10 +184,15 @@ export function StandaloneToolActivity({
 export function ToolOnlyNarration({
   blocks,
   live,
+  previews,
+  onOpen,
 }: {
   blocks: readonly ThreadMessage["blocks"][number][];
   live: boolean;
+  previews?: readonly (ToolStepPreview | null)[];
+  onOpen?: () => void;
 }) {
+  const previewsByBlock = toolStepPreviewsByBlock(blocks, previews);
   return (
     <>
       {blocks.map((block, i) =>
@@ -177,6 +203,8 @@ export function ToolOnlyNarration({
             steps={block.steps}
             stepCount={toolStepCount(block.steps)}
             durationMs={block.durationMs}
+            previews={previewsByBlock[i]}
+            onOpen={onOpen}
           />
         ) : null,
       )}

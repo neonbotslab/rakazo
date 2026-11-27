@@ -465,13 +465,29 @@ export type ToolStepCall = z.infer<typeof ToolStepCallSchema>;
 
 /**
  * What a bot reply's tool calls were sent and returned, for its later runs to replay. Stored
- * encrypted beside the message, never in its blocks, so clients never receive it. One entry per
+ * encrypted beside the message, apart from the blocks in the transcript. One entry per
  * step of the message's steps blocks, in order; null for a step whose calls were not all kept.
  */
 export const ToolHistorySchema = z.object({
   steps: z.array(z.object({ tool: z.string(), calls: z.array(ToolStepCallSchema) }).nullable()),
 });
 export type ToolHistory = z.infer<typeof ToolHistorySchema>;
+
+export const TOOL_STEP_PREVIEW_LENGTH = 150;
+const ToolStepPreviewSchema = z.object({
+  tool: z.string().max(TOOL_STEP_PREVIEW_LENGTH),
+  input: z.string().max(TOOL_STEP_PREVIEW_LENGTH).optional(),
+  output: z.string().max(TOOL_STEP_PREVIEW_LENGTH).optional(),
+  failed: z.number().int().positive().optional(),
+});
+export type ToolStepPreview = z.infer<typeof ToolStepPreviewSchema>;
+
+/** One preview of the last call per step, in transcript order. Available to the run starter. */
+export const ToolStepPreviewsSchema = z.object({
+  steps: z.array(ToolStepPreviewSchema.nullable()),
+});
+export type ToolStepPreviews = z.infer<typeof ToolStepPreviewsSchema>;
+
 /** A step as a run replays it: what the UI shows, with its tool and kept calls when it has them. */
 export type HistoryToolStep = Extract<MessageBlock, { kind: "steps" }>["steps"][number] & {
   tool?: string;

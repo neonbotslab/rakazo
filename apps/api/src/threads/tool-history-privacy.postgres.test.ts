@@ -1,8 +1,12 @@
+import { randomUUID } from "node:crypto";
+import { onError } from "@orpc/server";
+import { RPCHandler } from "@orpc/server/fetch";
 import type { Actor, MessageBlock } from "@rakazo/contracts";
 import type { PrismaClient } from "@rakazo/db";
 import {
   asSystem,
   createDb,
+  createThreadEvents,
   finalizeRun,
   loadRunHistoryMessages,
   provisionMessagingIdentity,
@@ -10,6 +14,9 @@ import {
   runAsTenant,
 } from "@rakazo/db";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import type { RouterDeps } from "../router.js";
+import { createRouter } from "../router.js";
+import { handleRpcError } from "../rpc-errors.js";
 import { loadMessagePage } from "./thread-message-pages.js";
 import { threadSnapshot } from "./thread-snapshot.js";
 import { resolveThreadTarget } from "./thread-target.js";
@@ -19,14 +26,19 @@ const describePostgres =
   process.env.VERIFY_DATABASE === "1" && databaseUrl ? describe : describe.skip;
 
 const PRIVATE = "PRIVATE-TOOL-OUTPUT";
+const PRIVATE_RESULT = `${PRIVATE}\n${"x".repeat(200)}`;
 
 describePostgres("a reply's kept tool calls (PostgreSQL)", () => {
   let prisma: PrismaClient;
   let system: PrismaClient;
   let close: () => Promise<void>;
   let actor: Actor;
+  let member: Actor;
   let botId: string;
   let threadId: string;
+  let runId: string;
+  let messageId: string;
+  let call: (viewer: Actor, path: string, input: Record<string, unknown>) => Promise<Response>;
   const address = `+1555${Math.floor(Math.random() * 9_000_000 + 1_000_000)}`;
 
   beforeAll(async () => {
@@ -45,22 +57,19 @@ describePostgres("a reply's kept tool calls (PostgreSQL)", () => {
     );
     ({ botId, threadId } = identity);
     actor = { ...identity, email: "fixture@example.test", isDeploymentOwner: false };
-  });
-
-  afterAll(async () => {
-    try {
-      if (actor) {
-        await system.messagingIdentity.deleteMany({ where: { provider: "sendblue", address } });
-        await system.organization.deleteMany({ where: { id: actor.spaceId } });
-        await system.user.deleteMany({ where: { id: actor.userId } });
-      }
-    } finally {
-      await close?.();
-    }
-  });
-
-  it("reach the bot's later runs, never a snapshot, a message page, a live event or a plain read", async () => {
     const { spaceId, userId } = actor;
+    const memberId = randomUUID();
+    const email = `${memberId}@example.test`;
+    member = { ...actor, userId: memberId, email };
+    await system.user.create({ data: { id: memberId, name: "Other", email } });
+    const membership = {
+      id: memberId,
+      organizationId: spaceId,
+      userId: memberId,
+      role: "member",
+      createdAt: new Date(),
+    };
+    await system.member.create({ data: membership });
     const task = await system.task.create({
       data: { spaceId, botId, threadId, userId, prompt: "check the notes", status: "running" },
     });
@@ -78,6 +87,7 @@ describePostgres("a reply's kept tool calls (PostgreSQL)", () => {
         leaseFence: 1,
       },
     });
+    runId = run.id;
     const attempt = await system.attempt.create({
       data: { runId: run.id, fence: 1, status: "running" },
     });
@@ -93,7 +103,7 @@ describePostgres("a reply's kept tool calls (PostgreSQL)", () => {
             calls: [
               {
                 arguments: '{"command":"cat notes.txt"}',
-                result: PRIVATE,
+                result: PRIVATE_RESULT,
                 image: { artifactId: "screenshot-1" },
               },
             ],
@@ -102,6 +112,7 @@ describePostgres("a reply's kept tool calls (PostgreSQL)", () => {
         ],
       },
       { kind: "text", text: "Done." },
+      { kind: "steps", steps: [{ label: "Search", count: 1, outcomes: { stopped: 1 } }] },
     ] as MessageBlock[];
     await runAsTenant(actor, () =>
       finalizeRun(prisma, {
@@ -117,6 +128,44 @@ describePostgres("a reply's kept tool calls (PostgreSQL)", () => {
         blocks,
       }),
     );
+    ({ id: messageId } = await system.message.findFirstOrThrow({ where: { runId } }));
+    const deps = {
+      prisma,
+      events: createThreadEvents(prisma),
+      env: { agentRuntime: "scripted" },
+    } as RouterDeps;
+    const handler = new RPCHandler(createRouter(deps), {
+      clientInterceptors: [onError((error, { path }) => handleRpcError(error, path))],
+    });
+    call = async (viewer, path, input) => {
+      const { response } = await handler.handle(
+        new Request(`http://test.invalid/rpc/threads/${path}`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ json: input }),
+        }),
+        { prefix: "/rpc", context: { actor: viewer } },
+      );
+      return response ?? new Response(null, { status: 404 });
+    };
+  });
+
+  afterAll(async () => {
+    try {
+      if (actor) {
+        await system.messagingIdentity.deleteMany({ where: { provider: "sendblue", address } });
+        await system.organization.deleteMany({ where: { id: actor.spaceId } });
+        await system.user.deleteMany({
+          where: { id: { in: [actor.userId, member?.userId].filter(Boolean) } },
+        });
+      }
+    } finally {
+      await close?.();
+    }
+  });
+
+  it("reach the bot's later runs, never a snapshot, a message page, a live event or a plain read", async () => {
+    const { userId } = actor;
     const leaks = (value: unknown) => {
       const json = JSON.stringify(value);
       return [PRIVATE, "cat notes.txt", "screenshot-1", '"calls"', '"tool"', "toolHistory"].filter(
@@ -126,23 +175,22 @@ describePostgres("a reply's kept tool calls (PostgreSQL)", () => {
 
     await runAsTenant(actor, async () => {
       const event = await prisma.event.findFirstOrThrow({
-        where: { threadId, runId: run.id, type: "thread.message.created" },
+        where: { threadId, runId, type: "thread.message.created" },
       });
       expect(leaks(event.payload)).toEqual([]);
       const target = await resolveThreadTarget(prisma, actor, { botId });
-      const snapshot = await threadSnapshot({ prisma }, target);
-      expect(snapshot.messages.some((message) => message.runId === run.id)).toBe(true);
+      const snapshot = await threadSnapshot({ prisma }, target, userId);
+      expect(snapshot.messages.some((message) => message.runId === runId)).toBe(true);
       expect(leaks(snapshot)).toEqual([]);
       expect(leaks(await loadMessagePage(prisma, threadId, undefined, 50))).toEqual([]);
       // An ordinary read leaves the column out; only a read that asks for it gets it.
-      const row = await prisma.message.findFirstOrThrow({ where: { runId: run.id } });
+      const row = await prisma.message.findFirstOrThrow({ where: { runId } });
       expect(row).not.toHaveProperty("toolHistory");
       expect(leaks(row)).toEqual([]);
       // The steps block keeps what the UI shows.
       expect((row.blocks as MessageBlock[])[0]).toEqual({
         kind: "steps",
         steps: [{ label: "Shell", count: 1, outcomes: { succeeded: 1 } }],
-        durationMs: expect.any(Number),
       });
     });
 
@@ -158,9 +206,9 @@ describePostgres("a reply's kept tool calls (PostgreSQL)", () => {
         50,
       ),
     );
-    expect(theirs.find((message) => message.runId === run.id)?.toolHistory).toBeNull();
+    expect(theirs.find((message) => message.runId === runId)?.toolHistory).toBeNull();
     expect(JSON.stringify(theirs)).not.toContain(PRIVATE);
-    const reply = history.find((message) => message.runId === run.id);
+    const reply = history.find((message) => message.runId === runId);
     expect(JSON.parse(reply!.toolHistory!)).toEqual({
       steps: [
         {
@@ -168,12 +216,51 @@ describePostgres("a reply's kept tool calls (PostgreSQL)", () => {
           calls: [
             {
               arguments: '{"command":"cat notes.txt"}',
-              result: PRIVATE,
+              result: PRIVATE_RESULT,
               image: { artifactId: "screenshot-1" },
             },
           ],
         },
+        null,
       ],
     });
+  });
+
+  it("returns a bounded text preview to the run starter and advertises access in chat", async () => {
+    const response = await call(actor, "toolStepPreviews", { botId, messageId });
+    expect(response.status).toBe(200);
+    const { json } = await response.json();
+    expect(json.steps[0]).toEqual({
+      tool: "shell",
+      input: '{"command":"cat notes.txt"}',
+      output: `${PRIVATE} ${"x".repeat(149 - PRIVATE.length - 1)}…`,
+    });
+    const page = await call(actor, "messages", { botId });
+    const inspectable = expect.objectContaining({ id: messageId, canInspectToolSteps: true });
+    expect(await page.json()).toMatchObject({
+      json: { messages: expect.arrayContaining([inspectable]) },
+    });
+    const snapshot = await call(actor, "get", { botId });
+    expect(await snapshot.json()).toMatchObject({
+      json: { messages: expect.arrayContaining([inspectable]) },
+    });
+  });
+
+  it("refuses another Space member who can read the reply", async () => {
+    const page = await call(member, "messages", { botId });
+    expect(page.status).toBe(200);
+    const { json } = await page.json();
+    const reply = json.messages.find((message: { id: string }) => message.id === messageId);
+    expect(reply).toBeDefined();
+    expect(reply).not.toHaveProperty("canInspectToolSteps");
+    const response = await call(member, "toolStepPreviews", { botId, messageId });
+    expect(response.status).toBe(403);
+  });
+
+  it("returns a null slot for a step without retained calls", async () => {
+    const response = await call(actor, "toolStepPreviews", { botId, messageId });
+    expect(response.status).toBe(200);
+    const { json } = await response.json();
+    expect(json.steps[1]).toBeNull();
   });
 });

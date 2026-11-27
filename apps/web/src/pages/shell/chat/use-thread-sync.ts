@@ -49,6 +49,14 @@ import type { ComputerState } from "../computers/use-computer";
 import type { useBrowserNotifications } from "../use-browser-notifications";
 import type { ThreadState } from "./use-thread-state";
 
+function savedToolSteps(event: ProductEvent) {
+  return (
+    (event.type === "thread.message.created" || event.type === "thread.message.updated") &&
+    Array.isArray(event.payload.blocks) &&
+    event.payload.blocks.some((block) => block?.kind === "steps")
+  );
+}
+
 function applyThreadEvent(
   event: ProductEvent,
   commitSnapshot: (next: ThreadSnapshot | null) => void,
@@ -463,7 +471,11 @@ export function useThreadSync({
           }
           if (messageUnreadFor(event.payload, meId)) markBotReadIfVisible(active.id);
         }
-        if (needsThreadSnapshotAfterEvent(event) || event.type === "skill.teaching.stopped") {
+        if (
+          needsThreadSnapshotAfterEvent(event) ||
+          savedToolSteps(event) ||
+          event.type === "skill.teaching.stopped"
+        ) {
           // waiting_input: reconcile ask cards if a stale post-send refresh raced SSE.
           void bestEffort("refresh thread snapshot", snapshotRefresh.invalidate());
         } else if (isComputerStatusEvent(event)) {
@@ -561,7 +573,7 @@ export function useThreadSync({
         ) {
           void sidebarRefresh.invalidate().catch(() => undefined);
         }
-        if (needsThreadSnapshotAfterEvent(event)) {
+        if (needsThreadSnapshotAfterEvent(event) || savedToolSteps(event)) {
           // waiting_input: reconcile ask cards if a stale post-send refresh raced SSE.
           void bestEffort("refresh group snapshot", snapshotRefresh.invalidate());
         }

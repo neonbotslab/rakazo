@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import type { ThreadMessage } from "@rakazo/contracts";
 import { foldPeerReplies } from "@rakazo/core";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { ComponentProps, ReactNode, RefObject } from "react";
 import { act } from "react";
 import type { Root } from "react-dom/client";
@@ -18,8 +19,6 @@ vi.mock("@lingui/react/macro", () => ({
   useLingui: () => ({ t: stableT }),
 }));
 
-vi.mock("../../../lib/query/rpc", () => ({ rpc: {} }));
-
 const G1 = "bot-g1";
 const G2 = "bot-g2";
 const ARCHIVED = "bot-archived";
@@ -34,6 +33,7 @@ type Roster = {
 let container: HTMLDivElement;
 let root: Root;
 let scrollRef: RefObject<HTMLDivElement | null>;
+let queries: QueryClient;
 let seq = 0;
 
 beforeEach(() => {
@@ -50,11 +50,13 @@ beforeEach(() => {
   container = document.createElement("div");
   document.body.append(container);
   root = createRoot(container);
+  queries = new QueryClient();
   scrollRef = { current: container };
 });
 
 afterEach(() => {
   act(() => root.unmount());
+  queries.clear();
   container.remove();
   vi.unstubAllGlobals();
 });
@@ -125,7 +127,13 @@ function renderTranscript(messages: ThreadMessage[], roster: Roster) {
     onReleaseComputer: vi.fn(),
     rpc,
   };
-  act(() => root.render(<Transcript {...props} />));
+  act(() =>
+    root.render(
+      <QueryClientProvider client={queries}>
+        <Transcript {...props} />
+      </QueryClientProvider>,
+    ),
+  );
 }
 
 function header(messageId: string): string | null {

@@ -1,9 +1,24 @@
-import type { MessageBlock } from "@rakazo/contracts";
+import type { MessageBlock, ToolStepPreview } from "@rakazo/contracts";
 import { isRetiredImportSetup, isToolActivityBlock } from "@rakazo/core";
 
 /** Number of tool calls behind a steps block: the sum of each row's count. */
 export function toolStepCount(steps: readonly { count: number }[]): number {
   return steps.reduce((total, step) => total + step.count, 0);
+}
+
+/** Retained previews have one slot per step across all the message's tool blocks. */
+export function toolStepPreviewsByBlock(
+  blocks: readonly MessageBlock[],
+  previews: readonly (ToolStepPreview | null)[] | undefined,
+) {
+  if (!previews) return [];
+  let next = 0;
+  return blocks.map((block) => {
+    if (block.kind !== "steps") return undefined;
+    const start = next;
+    next += block.steps.length;
+    return previews.slice(start, next);
+  });
 }
 
 /**

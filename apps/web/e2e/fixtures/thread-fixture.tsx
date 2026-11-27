@@ -2,8 +2,10 @@ import type { ProductEvent, ThreadMessage, ThreadSnapshot } from "@rakazo/contra
 import { foldPeerReplies, reduceThreadSnapshot } from "@rakazo/core";
 import type { GroupAvatarMember } from "@rakazo/ui-web";
 import { DEFAULT_BOT_AVATAR_COLOR } from "@rakazo/ui-web";
+import { QueryClientProvider } from "@tanstack/react-query";
 import type { ReactNode } from "react";
 import { useMemo, useRef } from "react";
+import { queryClient } from "../../src/lib/query/query";
 import { rpc } from "../../src/lib/query/rpc";
 import { Transcript } from "../../src/pages/shell/chat/transcript";
 
@@ -71,46 +73,48 @@ export function FixtureTranscript({
   );
   const bot = (botId: string | undefined) => bots.find((member) => member.botId === botId);
   return (
-    <main className="flex h-dvh flex-col bg-background text-foreground">
-      {header}
-      <Transcript
-        rpc={rpc}
-        scrollRef={scrollRef}
-        scrollRequest={null}
-        onScrollRequestHandled={noop}
-        followRequest={0}
-        callHoldsSpeaker={false}
-        artifactTarget={{ botId: BOT.botId }}
-        transcript={transcript}
-        showToolActivity={showToolActivity}
-        olderCursor={null}
-        unreadAfterSeq={null}
-        loadingOlder={false}
-        answerableAskIds={answerableAskIds}
-        dismissableAskIds={answerableAskIds}
-        running={running}
-        liveReasoning={liveReasoning}
-        workingBots={running ? [bots[0]!] : []}
-        onLoadOlder={noop}
-        onOpenBot={noop}
-        onAnswer={resolved}
-        onReply={noop}
-        onMarkUnread={noop}
-        onQuote={noop}
-        onReact={resolved}
-        onJumpToMessage={noop}
-        onOpenPeerMessages={noop}
-        memberName={(botId) => bot(botId)?.name}
-        peerBot={(botId) => bot(botId) ?? BOT}
-        onRefresh={resolved}
-        onBotChanged={resolved}
-        onAddRoutine={noop}
-        voiceReady={false}
-        speakingMessageId={null}
-        onSpeak={noop}
-        onOpenComputer={noop}
-        onReleaseComputer={async () => {}}
-      />
-    </main>
+    <QueryClientProvider client={queryClient}>
+      <main className="flex h-dvh flex-col bg-background text-foreground">
+        {header}
+        <Transcript
+          rpc={rpc}
+          scrollRef={scrollRef}
+          scrollRequest={null}
+          onScrollRequestHandled={noop}
+          followRequest={0}
+          callHoldsSpeaker={false}
+          artifactTarget={{ botId: BOT.botId }}
+          transcript={transcript}
+          showToolActivity={showToolActivity}
+          olderCursor={null}
+          unreadAfterSeq={null}
+          loadingOlder={false}
+          answerableAskIds={answerableAskIds}
+          dismissableAskIds={answerableAskIds}
+          running={running}
+          liveReasoning={liveReasoning}
+          workingBots={running ? [bots[0]!] : []}
+          onLoadOlder={noop}
+          onOpenBot={noop}
+          onAnswer={resolved}
+          onReply={noop}
+          onMarkUnread={noop}
+          onQuote={noop}
+          onReact={resolved}
+          onJumpToMessage={noop}
+          onOpenPeerMessages={noop}
+          memberName={(botId) => bot(botId)?.name}
+          peerBot={(botId) => bot(botId) ?? BOT}
+          onRefresh={resolved}
+          onBotChanged={resolved}
+          onAddRoutine={noop}
+          voiceReady={false}
+          speakingMessageId={null}
+          onSpeak={noop}
+          onOpenComputer={noop}
+          onReleaseComputer={async () => {}}
+        />
+      </main>
+    </QueryClientProvider>
   );
 }
