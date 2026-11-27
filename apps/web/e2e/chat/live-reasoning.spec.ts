@@ -102,11 +102,32 @@ test("matches the timeline states across widths and themes", async ({ page }, te
         const names = page.getByTestId("bot-sender-name");
         if (state === "two-bot") {
           await expect(names).toHaveText(["Chief", "Atlas"]);
-          for (const id of ["chief-reply", "atlas-reply"]) {
+          const chief = page.locator('[data-message-id="chief-reply"]');
+          const followUp = page.locator('[data-message-id="chief-follow-up"]');
+          const chiefBubble = (await chief.getByTestId("message-bot-bubble").boundingBox())!;
+          const followUpDisclosure = (await followUp
+            .getByRole("button", { name: "Worked for 4s" })
+            .boundingBox())!;
+          expect(followUpDisclosure.y - (chiefBubble.y + chiefBubble.height)).toBe(8);
+
+          for (const [id, previousId, bubbleTestId] of [
+            ["chief-reply", "question", "message-user-bubble"],
+            ["atlas-reply", "chief-follow-up", "message-bot-bubble"],
+          ] as const) {
+            const previousBubble = page
+              .locator(`[data-message-id="${previousId}"]`)
+              .getByTestId(bubbleTestId);
+            const previousBox = (await previousBubble.boundingBox())!;
             const row = page.locator(`[data-message-id="${id}"]`);
             const name = row.getByTestId("bot-sender-name");
             const disclosure = row.getByTestId("thinking-trace").getByRole("button").first();
             const nameBox = (await name.boundingBox())!;
+            expect
+              .soft(
+                nameBox.y - (previousBox.y + previousBox.height),
+                `${width} ${theme} spacing above ${id}`,
+              )
+              .toBe(32);
             const disclosureBox = (await disclosure.boundingBox())!;
             const chevronBox = (await disclosure.locator("svg").boundingBox())!;
             expect(Math.abs(nameBox.x - (chevronBox.x + chevronBox.width / 2))).toBeLessThan(1);
