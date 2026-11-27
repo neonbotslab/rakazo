@@ -19,6 +19,7 @@ import {
   ExternalConversationPolicySchema,
   UpdateExternalConversationPolicyInput,
 } from "./external-conversations.js";
+import { ToolStepPreviewsSchema } from "./message-blocks.js";
 import { MessageReactionSchema } from "./reactions.js";
 import { SEARCH_QUERY_MAX_LENGTH, SearchQueryOutputSchema } from "./search.js";
 import { ChatAlertSchema, ThreadMessagePageSchema, ThreadSnapshotSchema } from "./thread.js";
@@ -53,6 +54,9 @@ export const threadsRpc = {
         }),
       )
       .output(ThreadMessagePageSchema),
+    toolStepPreviews: oc
+      .input(threadTarget.safeExtend({ messageId: Id }))
+      .output(ToolStepPreviewsSchema.nullable()),
     subscribe: oc
       .input(threadTarget.safeExtend({ cursor: z.number().int().min(-1) }))
       .output(eventIterator(ProductEventSchema)),

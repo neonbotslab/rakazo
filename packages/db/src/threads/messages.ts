@@ -1,11 +1,14 @@
-import type { MessageAuthor, MessageBlock, ToolHistory } from "@rakazo/contracts";
-import { splitToolHistory } from "@rakazo/core";
+import type { Actor, MessageAuthor, ToolHistory, ToolStepPreviews } from "@rakazo/contracts";
+import { MessageBlock, TOOL_STEP_PREVIEW_LENGTH, ToolHistorySchema } from "@rakazo/contracts";
+import { ClientError, splitToolHistory, truncatePlainText } from "@rakazo/core";
 import type { PrismaClient } from "../database/client.js";
 import { Prisma } from "../database/client.js";
+import { readJsonColumn } from "../database/json-column.js";
 import {
   THREAD_LOCK_TRANSACTION_OPTIONS,
   withTransactionRetry,
 } from "../database/transaction-retry.js";
+import { readMessageBlocks } from "./message-blocks.js";
 import { markThreadUnreadForMembers } from "./thread-reads.js";
 
 /**
@@ -176,6 +179,98 @@ async function withOwnToolHistory<
   );
 }
 
+/** Run IDs for saved bot replies the viewer may inspect. The transcript only needs this hint. */
+export async function ownToolStepMessageRuns(
+  prisma: Pick<Prisma.TransactionClient, "$queryRaw">,
+  scope: { threadId: string; userId: string },
+  messageIds: string[],
+): Promise<Map<string, string>> {
+  if (!messageIds.length) return new Map();
+  const messages = await prisma.$queryRaw<Array<{ id: string; runId: string }>>`
+    SELECT m.id, m."runId"
+    FROM messages m
+    JOIN threads t ON t.id = m."threadId"
+    JOIN runs r ON r.id = m."runId" AND r."threadId" = t.id AND r."spaceId" = t."spaceId"
+      AND r."botId" = m."botId"
+    WHERE t.id = ${scope.threadId} AND m.role = 'bot' AND r."userId" = ${scope.userId}
+      AND m.id = ANY(${messageIds}::text[])
+  `;
+  return new Map(messages.map((message) => [message.id, message.runId]));
+}
+
+class ToolStepAccessError extends ClientError {
+  constructor() {
+    super("FORBIDDEN", "You can only inspect tools from a run you started.");
+  }
+}
+
+/** Only the run starter can read previews of the reply's retained tool calls. */
+export async function loadOwnToolStepPreviews(
+  prisma: PrismaClient,
+  actor: Pick<Actor, "spaceId" | "userId">,
+  { threadId, messageId }: { threadId: string; messageId: string },
+): Promise<ToolStepPreviews | null> {
+  const owned = await ownToolStepMessageRuns(prisma, { threadId, userId: actor.userId }, [
+    messageId,
+  ]);
+  const runId = owned.get(messageId);
+  if (!runId) throw new ToolStepAccessError();
+  const message = await prisma.message.findUnique({
+    where: { id: messageId, threadId, runId, role: "bot", thread: { spaceId: actor.spaceId } },
+    select: { id: true, blocks: true, toolHistory: true },
+  });
+  if (!message) throw new ToolStepAccessError();
+  if (!message.toolHistory) return null;
+  let value: unknown;
+  try {
+    value = JSON.parse(message.toolHistory);
+  } catch (error) {
+    if (!(error instanceof SyntaxError)) throw error;
+  }
+  const history = readJsonColumn(
+    ToolHistorySchema.nullable(),
+    value,
+    { table: "messages", column: "toolHistory", id: messageId },
+    { fallback: null },
+  );
+  if (!history) return null;
+
+  const { blocks, intact } = readMessageBlocks(message);
+  if (!intact) return null;
+  const counts: number[] = [];
+  for (const block of blocks) {
+    if (block.kind !== "steps") continue;
+    const parsed = MessageBlock.safeParse(block);
+    if (!parsed.success || parsed.data.kind !== "steps") return null;
+    counts.push(...parsed.data.steps.map((step) => step.count));
+  }
+  if (
+    history.steps.length !== counts.length ||
+    history.steps.some((step, index) => step && step.calls.length !== counts[index])
+  ) {
+    return null;
+  }
+  return {
+    steps: history.steps.map((step) => {
+      const lastCall = step?.calls.at(-1);
+      if (!step || !lastCall) return null;
+      return {
+        tool: toolStepPreviewText(step.tool),
+        input: lastCall.arguments ? toolStepPreviewText(lastCall.arguments) : undefined,
+        output: lastCall.result ? toolStepPreviewText(lastCall.result) : undefined,
+        failed: step.calls.filter((call) => call.failed).length || undefined,
+      };
+    }),
+  };
+}
+
+function toolStepPreviewText(text: string): string {
+  const line = text.replace(/\s+/g, " ").trim();
+  return line.length > TOOL_STEP_PREVIEW_LENGTH
+    ? `${truncatePlainText(line, TOOL_STEP_PREVIEW_LENGTH - 1).trimEnd()}…`
+    : line;
+}
+
 /** Marks the bot message that keeps the reply text of a run that failed partway through it. */
 export function partialReplyClientNonce(runId: string): string {
   return `partial-reply:${runId}`;
@@ -189,7 +284,7 @@ export interface CreateThreadMessageInput {
   threadId: string;
   role: "user" | "bot" | "system";
   blocks: MessageBlock[];
-  /** A bot reply's tool calls as sent and returned, for its later runs only. */
+  /** A bot reply's tool calls as sent and returned, kept apart from transcript blocks. */
   toolHistory?: ToolHistory;
   botId?: string;
   /** The signed-in person who wrote a user message; null when the sender is not a known user. */

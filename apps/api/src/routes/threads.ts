@@ -29,6 +29,7 @@ import {
   IsolationError,
   isUniqueViolation,
   loadMessageAuthor,
+  loadOwnToolStepPreviews,
   lockSpaceGroup,
   THREAD_LOCK_TRANSACTION_OPTIONS,
   touchGroupUpdatedAt,
@@ -219,7 +220,17 @@ export function threadsRoutes(ctx: RouterContext) {
           input.around,
           input.includePeerRuns,
           input.includePeerReceipts,
+          context.actor.userId,
         );
+      }),
+      toolStepPreviews: authed.threads.toolStepPreviews.handler(async ({ context, input }) => {
+        const target = await resolveThreadTarget(deps.prisma, context.actor, input, {
+          includeArchived: true,
+        });
+        return loadOwnToolStepPreviews(deps.prisma, context.actor, {
+          threadId: target.threadId,
+          messageId: input.messageId,
+        });
       }),
       subscribe: authed.threads.subscribe.handler(async function* ({ context, input }) {
         const target = await resolveThreadTarget(deps.prisma, context.actor, input);

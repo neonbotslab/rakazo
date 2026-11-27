@@ -31,7 +31,16 @@ export async function threadSnapshot(
         await tx.$queryRaw`SELECT id FROM threads WHERE id = ${target.threadId} FOR SHARE`;
         const [messagePage, last, activeRuns, busyOrFailed, shared, computer, work] =
           await Promise.all([
-            loadMessagePage(tx, target.threadId, undefined, THREAD_MESSAGE_PAGE_SIZE),
+            loadMessagePage(
+              tx,
+              target.threadId,
+              undefined,
+              THREAD_MESSAGE_PAGE_SIZE,
+              undefined,
+              false,
+              false,
+              viewerId,
+            ),
             tx.event.findFirst({
               where: { threadId: target.threadId },
               orderBy: { seq: "desc" },
@@ -150,7 +159,16 @@ export async function threadSnapshot(
     async (tx) => {
       await tx.$queryRaw`SELECT id FROM threads WHERE id = ${target.threadId} FOR SHARE`;
       const [messagePage, last, activeRuns, recentTerminals, memberStatuses] = await Promise.all([
-        loadMessagePage(tx, target.threadId, undefined, THREAD_MESSAGE_PAGE_SIZE),
+        loadMessagePage(
+          tx,
+          target.threadId,
+          undefined,
+          THREAD_MESSAGE_PAGE_SIZE,
+          undefined,
+          false,
+          false,
+          viewerId,
+        ),
         tx.event.findFirst({
           where: { threadId: target.threadId },
           orderBy: { seq: "desc" },
