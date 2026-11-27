@@ -1,4 +1,5 @@
 import type { AgentRunRequest, MemoryReadRequest } from "@rakazo/adapter-kit";
+import { renderOwnerRules } from "@rakazo/core";
 import { describe, expect, it, vi } from "vitest";
 import type * as ComputerLifecycleModule from "../../computers/computer-lifecycle.js";
 import { createRunExecutor } from "./executor.js";
@@ -16,6 +17,7 @@ vi.mock("../../computers/computer-lifecycle.js", async (importOriginal) => ({
 
 const OWNER_MEMORY = "Owner's door code is 4821";
 const OWNER_NOTE = "Plan the owner's surprise party";
+const OWNER_RULES = "Use metric units by default.";
 /** What an owner-only tool returned to an earlier reply, kept for the bot's own later turns. */
 const OWNER_TOOL_RESULT = "Inbox: offer letter from the owner's new employer";
 /** The earlier reply itself, part of the owner's private exchange in the thread. */
@@ -53,11 +55,12 @@ function inHistory(
   );
 }
 
-type Sender = { senderId: string; senderIsBot?: boolean };
+type Sender = { senderId: string; senderIsBot?: boolean; kind?: "direct" | "mention" };
 
 /** One team-chat run through the executor, returning what the model was given. */
 async function teamChatRun(input: {
   senders: Sender[];
+  ownerRules?: string;
   ownerAddress?: string | null;
   linkedAddresses?: string[];
   sharedChannel?: boolean;
@@ -72,6 +75,7 @@ async function teamChatRun(input: {
     providerEventId: `event-${index}`,
     senderId: sender.senderId,
     senderIsBot: sender.senderIsBot ?? false,
+    kind: sender.kind ?? "direct",
     batchContext: null as string | null,
   }));
   if (!waking) throw new Error("a run needs a waking message");
@@ -112,7 +116,11 @@ async function teamChatRun(input: {
     space: { findUnique: vi.fn(async () => null) },
     $queryRaw: vi.fn(async () => []),
     spaceMember: { findUnique: vi.fn(async () => ({ id: "member-1" })) },
-    user: { findUnique: vi.fn(async () => null) },
+    user: {
+      findUnique: vi.fn(async () =>
+        input.ownerRules ? { ownerRulesVersions: [{ text: input.ownerRules }] } : null,
+      ),
+    },
     run: {
       findFirst: vi.fn(async () => original),
       findUnique: vi.fn(async () => run),
@@ -423,10 +431,15 @@ describe("team chat runs from people other than the owner", () => {
     ["another app", [{ senderId: "T1:U-OWNER", senderIsBot: true }]],
     ["a batch that mixes in a coworker", [{ senderId: "T1:U-OWNER" }, { senderId: "T1:U-PAT" }]],
   ])("keep the owner's memory and notes from %s", async (_who, senders) => {
-    const result = await teamChatRun({ senders, ownerAddress: "T1:U-OWNER" });
+    const result = await teamChatRun({
+      senders,
+      ownerAddress: "T1:U-OWNER",
+      ownerRules: OWNER_RULES,
+    });
     expect(result.sawOwnerState).toBe(false);
     expect(result.sawOwnerToolResult).toBe(false);
     expect(result.toldNonOwner).toBe(true);
+    expect(result.context).not.toContain("<owner_rules>");
     for (const tool of ownerOnlyTools) expect(result.tools).not.toContain(tool);
     expect(result.tools).toContain("web_fetch");
   });
@@ -455,10 +468,24 @@ describe("team chat runs from the owner", () => {
     expect(result.toldNonOwner).toBe(false);
     for (const tool of ownerOnlyTools) expect(result.tools).toContain(tool);
   });
+
+  it("keeps bot rules private when the owner speaks in a public room", async () => {
+    const result = await teamChatRun({
+      senders: [{ senderId: "T1:U-OWNER", kind: "mention" }],
+      ownerAddress: "T1:U-OWNER",
+      ownerRules: OWNER_RULES,
+    });
+
+    expect(result.context).not.toContain("<owner_rules>");
+  });
 });
 
 describe("runs whose waking message is stored beside entries that are not blocks", () => {
-  const owner = { senders: [{ senderId: "T1:U-OWNER" }], ownerAddress: "T1:U-OWNER" };
+  const owner = {
+    senders: [{ senderId: "T1:U-OWNER" }],
+    ownerAddress: "T1:U-OWNER",
+    ownerRules: OWNER_RULES,
+  };
   const stray = [{ text: "no kind" }, null];
 
   it.each([
@@ -469,6 +496,7 @@ describe("runs whose waking message is stored beside entries that are not blocks
     const result = await teamChatRun({ ...owner, sourceBlocks });
     expect(result.sawOwnerState).toBe(false);
     expect(result.sawOwnerToolResult).toBe(false);
+    expect(result.context).not.toContain("<owner_rules>");
     for (const tool of ownerOnlyTools) expect(result.tools).not.toContain(tool);
   });
 
@@ -537,9 +565,11 @@ describe("delegation inherits connected chat privacy", () => {
       sharedChannel: true,
       delegated: "helper",
       attachment: true,
+      ownerRules: OWNER_RULES,
     });
     expect(result.history.some((message) => message.content.includes("notes.txt"))).toBe(true);
     expect(result.sawOwnerState).toBe(false);
+    expect(result.context).not.toContain("<owner_rules>");
     for (const tool of ownerOnlyTools) expect(result.tools).not.toContain(tool);
   });
 
@@ -565,8 +595,10 @@ describe("delegation inherits connected chat privacy", () => {
         senders: [{ senderId: "T1:U-OWNER" }],
         ownerAddress: "T1:U-OWNER",
         delegated,
+        ownerRules: OWNER_RULES,
       });
       expect(result.sawOwnerState).toBe(true);
+      expect(result.context).toContain(renderOwnerRules(OWNER_RULES));
       for (const tool of ownerOnlyTools) expect(result.tools).toContain(tool);
     },
   );

@@ -298,6 +298,7 @@ describe("Pi outgoing provider prefixes", () => {
             runId: `run-fixture-${index}`,
             prompt: `Continue.\n\n${currentTurnDataPrompt(memory, scratchpad)}`,
             instructions: userTurnInstructions({
+              ownerRules: "Give the result first.",
               botInstructions: "Stable guidance.\nStable constraints.",
               computerInstruction: "Stable computer tools.",
               pageBrowserAllowed: true,
@@ -348,11 +349,11 @@ describe("Pi outgoing provider prefixes", () => {
       ]);
       for (const request of requests) {
         expect(request.messages[0]?.role).toBe("system");
-        expect(
-          String(request.messages[0]?.content).startsWith(
-            `${RAKAZO_PLATFORM_INSTRUCTION}\n\nStable guidance.\nStable constraints.`,
-          ),
-        ).toBe(true);
+        const systemPrompt = String(request.messages[0]?.content);
+        expect(systemPrompt.startsWith(RAKAZO_PLATFORM_INSTRUCTION)).toBe(true);
+        expect(systemPrompt).toContain(
+          "<owner_rules>\nGive the result first.\n</owner_rules>\n\nStable guidance.\nStable constraints.",
+        );
       }
       const first = requests[0]!.messages.slice(0, -1);
       expect(first.slice(1)).toEqual(history);

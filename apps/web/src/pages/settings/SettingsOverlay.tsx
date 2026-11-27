@@ -42,6 +42,7 @@ import {
   UpdatesSettingsPanel,
 } from "./AccountSettingsOverlay";
 import { BillingSettingsPanel } from "./BillingSettingsPanel";
+import { BotRulesSettingsPanel } from "./BotRulesSettingsPanel";
 import { LabsSettingsPanel } from "./LabsSettingsPanel";
 import { MemorySettingsOverlay } from "./MemorySettingsOverlay";
 import { MessagingSettingsPanel } from "./MessagingSettingsPanel";
@@ -285,7 +286,13 @@ export function SettingsOverlay({
       open
       onOpenChange={(open, details) => {
         if (open) return;
-        if (panelBusy) {
+        const target = details.event?.target;
+        if (
+          panelBusy ||
+          (details.reason === "escape-key" &&
+            target instanceof Element &&
+            target.closest('[data-slot="popover-content"]'))
+        ) {
           details.cancel();
           return;
         }
@@ -515,6 +522,7 @@ export function SettingsOverlay({
                       onBusyChange={setMemoryBusy}
                     />
                   ) : null}
+                  {section === "bot-rules" ? <BotRulesSettingsPanel /> : null}
                   {section === "voice" ? (
                     <VoiceSettingsOverlay
                       embedded

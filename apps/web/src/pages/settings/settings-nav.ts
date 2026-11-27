@@ -5,6 +5,7 @@ import {
   CloudDownload,
   Cpu,
   CreditCard,
+  FileText,
   FlaskConical,
   Gauge,
   KeyRound,
@@ -71,6 +72,12 @@ export function useSettingsNavItems(available: {
       label: t`Memory`,
       icon: Brain,
       description: t`What your bots remember between chats.`,
+    },
+    {
+      id: "bot-rules",
+      label: t`Bot rules`,
+      icon: FileText,
+      description: t`Instructions your bots follow when they work for you.`,
     },
     {
       id: "voice",

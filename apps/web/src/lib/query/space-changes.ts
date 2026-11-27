@@ -18,6 +18,7 @@ const READS: Record<ReadChangeKind, readonly Procedure[]> = {
     ["autoReview", "get"],
     ["hostPlugins", "chatCards"],
     ["hostPlugins", "list"],
+    ["ownerRules", "list"],
     ["spaceSettings", "overrides"],
   ],
   runs: [

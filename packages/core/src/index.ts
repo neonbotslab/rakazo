@@ -129,6 +129,7 @@ export * from "./primitives/response-bytes.js";
 export * from "./primitives/retry.js";
 export * from "./primitives/retry-policy.js";
 export * from "./primitives/search.js";
+export { estimateTextTokens } from "./primitives/text-tokens.js";
 export {
   formatShortHistoryDate,
   isEndOfZonedDay,
@@ -147,6 +148,7 @@ export * from "./routines/routine-runs.js";
 export * from "./routines/schedule.js";
 export * from "./runs/action-approval.js";
 export * from "./runs/activity-sections.js";
+export { renderOwnerRules } from "./runs/owner-rules.prompt.js";
 export * from "./runs/run-error.js";
 export * from "./runs/run-state.js";
 export * from "./runs/stuck-work.js";

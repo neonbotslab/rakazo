@@ -203,6 +203,7 @@ function modelTurnRequest(
     // cache-aware context for connections declaring a cache window.
     contextStrategy: deps.contextStrategy,
     instructions: userTurnInstructions({
+      ownerRules: ctx.source.ownerRules,
       botInstructions: [
         runIdentityInstruction(bot, run.trigger),
         botEmail

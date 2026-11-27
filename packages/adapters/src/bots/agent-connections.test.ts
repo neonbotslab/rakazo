@@ -38,6 +38,7 @@ function createDeps(
     connection?: Record<string, unknown> | null;
     pendingConnection?: Record<string, unknown> | null;
     sourceHop?: number;
+    targetUserId?: string;
     /** Simulates a revoke landing between the pre-check and the transaction. */
     connectionRevokedInsideTx?: boolean;
     /** Simulates a revoke landing after the in-transaction approval read. */
@@ -46,6 +47,7 @@ function createDeps(
     runLease?: { leaseOwner: string; leaseFence: number };
   } = {},
 ) {
+  const target = { ...targetIdentity, userId: overrides.targetUserId ?? targetIdentity.userId };
   const policyRows = () =>
     ["bot-1", "bot-2"].map((id) => ({
       id,
@@ -121,11 +123,11 @@ function createDeps(
           // within a platform.
           if (where.provider_address) {
             if (where.provider_address.provider !== "sendblue") return null;
-            if (where.provider_address.address === "+15552222222") return targetIdentity;
+            if (where.provider_address.address === "+15552222222") return target;
             if (where.provider_address.address === "+15551111111") return requesterIdentity;
             return null;
           }
-          if (where.botId === "bot-2" || where.id === "mi-2") return targetIdentity;
+          if (where.botId === "bot-2" || where.id === "mi-2") return target;
           if (where.botId === "bot-1" || where.id === "mi-1") return requesterIdentity;
           return null;
         },
@@ -138,7 +140,7 @@ function createDeps(
               id: "bot-2",
               name: "Helper",
               spaceId: "ws-2",
-              userId: "user-2",
+              userId: target.userId,
               archivedAt: null,
               thread: { id: "thread-2" },
             }
@@ -403,6 +405,24 @@ describe("messageConnectedAgent", () => {
     expect(deps.enqueue).toHaveBeenCalled();
     expect(deps.prisma.$transaction).toHaveBeenCalledWith(expect.any(Function), {
       timeout: 20_000,
+    });
+  });
+
+  it("records the sender's run for connected bots belonging to one account", async () => {
+    const deps = createDeps({
+      connection: { id: "ac-1", requesterBotId: "bot-1", targetBotId: "bot-2", status: "approved" },
+      targetUserId: run.userId,
+    });
+
+    const result = await messageConnectedAgent(deps, run, sender, {
+      address: targetIdentity.address,
+      message: "Pick up this task",
+    });
+
+    expect(result).toMatchObject({ ok: true, botId: targetIdentity.botId });
+    expect(deps.txCalls.messageCreate[0]).toMatchObject({
+      threadId: "thread-2",
+      blocks: [{ kind: "bot_message_received", fromBotId: sender.id, senderRunId: run.id }],
     });
   });
 

@@ -7,7 +7,7 @@ import {
   loadRunHistoryMessages,
   loadRunTurnState,
   readMessageBlocks,
-  teamChatRunFromOwner,
+  teamChatRunAudience,
 } from "@rakazo/db";
 import { bestEffort } from "@rakazo/logging";
 import { cloudAgentForActor } from "../../cloud-agents/cloud-agent-service.js";
@@ -56,6 +56,7 @@ import {
 import { runReplaysToolHistory } from "../turn/tool-step-calls.js";
 import { restoreTurnCheckpoint } from "../turn/turn-checkpoint.js";
 import type { HistoryReach } from "./run-instructions.prompt.js";
+import { ownerRulesForConversation } from "./run-owner-rules.js";
 
 export async function loadSavedTurn(services: RunExecutorServices, hold: RunHold) {
   const { resolveConnectedModel } = services;
@@ -166,7 +167,7 @@ export async function loadRunRecords(
     conversationRun.trigger === "messaging" && conversationRun.sourceMessageId
       ? await deps.prisma.message.findUnique({
           where: { id: conversationRun.sourceMessageId },
-          select: { id: true, blocks: true, clientNonce: true },
+          select: { id: true, blocks: true, clientNonce: true, authorUserId: true },
         })
       : null;
   const source = messagingSource ? readMessageBlocks(messagingSource) : undefined;
@@ -184,7 +185,7 @@ export async function loadRunRecords(
   const ownerComputerRoutine = await routineRunUsesOwnerComputer(deps.prisma, run);
   const historyReach = ownerComputerRoutine ? "none" : runHistoryReach(run);
   const [
-    { bot, ownerLabs },
+    { bot, owner },
     thread,
     messages,
     peerMessage,
@@ -208,12 +209,16 @@ export async function loadRunRecords(
       })
       .then(async (bot) => ({
         bot,
-        ownerLabs: (
-          await deps.prisma.user.findUnique({
-            where: { id: bot.userId },
-            select: { labs: true },
-          })
-        )?.labs,
+        owner: await deps.prisma.user.findUnique({
+          where: { id: bot.userId },
+          select: {
+            labs: true,
+            ownerRulesVersions:
+              run.userId === bot.userId
+                ? { orderBy: { id: "desc" }, take: 1, select: { text: true } }
+                : false,
+          },
+        }),
       })),
     deps.prisma.thread.findUniqueOrThrow({
       where: { id: run.threadId },
@@ -281,20 +286,30 @@ export async function loadRunRecords(
   const conversationThread = origin?.thread ?? thread;
   const teamChatConversationId =
     conversationRun.trigger === "messaging" ? conversationThread.externalConversationId : null;
-  const nonOwnerChatRun =
-    (isDelegatedRun(run.trigger) && !origin) ||
-    messagingChannelRun ||
-    (teamChatConversationId
-      ? !(await teamChatRunFromOwner(deps.prisma, {
+  const teamChatAudience =
+    !messagingChannelRun && teamChatConversationId
+      ? await teamChatRunAudience(deps.prisma, {
           externalConversationId: teamChatConversationId,
           sourceClientNonce: messagingSource?.clientNonce,
-        }))
-      : false);
+        })
+      : undefined;
+  const nonOwnerChatRun =
+    (isDelegatedRun(run.trigger) && !origin) || messagingChannelRun || teamChatAudience === "other";
+  const ownerRules = await ownerRulesForConversation(deps.prisma, {
+    ownerId: bot.userId,
+    run: conversationRun,
+    thread: conversationThread,
+    sourceMessage:
+      conversationRun.trigger === "messaging" ? messagingSource : origin?.sourceMessage,
+    teamChatAudience,
+    nonOwnerChatRun,
+    rules: owner?.ownerRulesVersions?.[0]?.text ?? "",
+  });
   const replaysToolHistory = runReplaysToolHistory(run.trigger, {
     fromUser: messages.find((message) => message.id === run.sourceMessageId)?.role === "user",
     nonOwnerChat: nonOwnerChatRun,
   });
-  const ticketBoardEnabled = hasLab(resolveLabs(ownerLabs, deps.deploymentLabs), "board");
+  const ticketBoardEnabled = hasLab(resolveLabs(owner?.labs, deps.deploymentLabs), "board");
   const historySearchBeforeSeq =
     contextStrategy !== "current" && conversationRun.sourceMessageId
       ? (messages.find((message) => message.id === conversationRun.sourceMessageId)?.seq ??
@@ -356,6 +371,7 @@ export async function loadRunRecords(
     savedSkills,
     agentSkills,
     nonOwnerChatRun,
+    ownerRules,
     replaysToolHistory,
     ticketBoardEnabled,
     historySearchBeforeSeq,

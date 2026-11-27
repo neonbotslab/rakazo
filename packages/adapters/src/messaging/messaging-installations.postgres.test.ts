@@ -8,8 +8,8 @@ import {
   provisionMessagingIdentity,
   runAsSystem,
   runAsTenant,
+  teamChatRunAudience,
   teamChatRunClientNonce,
-  teamChatRunFromOwner,
 } from "@rakazo/db";
 import { Pool } from "pg";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
@@ -139,24 +139,26 @@ describePostgres("messaging workspace installation (PostgreSQL)", () => {
           ...extra,
         },
       });
-    const fromOwner = (eventId: string) =>
+    const audience = (eventId: string) =>
       runAsSystem("check team chat sender", () =>
-        teamChatRunFromOwner(prisma, {
+        teamChatRunAudience(prisma, {
           externalConversationId: conversation.id,
           sourceClientNonce: teamChatRunClientNonce("slack", eventId),
         }),
       );
     const owner = await message("E-OWNER", "T-TEST:U-INSTALLER");
+    await message("E-ROOM", "T-TEST:U-INSTALLER", { kind: "mention" });
     const coworker = await message("E-COWORKER", "T-TEST:U-COWORKER");
     await message("E-APP", "T-TEST:U-INSTALLER", { senderIsBot: true });
     await message("E-MIXED", "T-TEST:U-INSTALLER", {
       batchContext: JSON.stringify({ prompt: "update", messageIds: [owner.id, coworker.id] }),
     });
-    expect(await fromOwner("E-OWNER")).toBe(true);
-    expect(await fromOwner("E-COWORKER")).toBe(false);
-    expect(await fromOwner("E-APP")).toBe(false);
-    expect(await fromOwner("E-MIXED")).toBe(false);
-    expect(await fromOwner("E-MISSING")).toBe(false);
+    expect(await audience("E-OWNER")).toBe("owner-direct");
+    expect(await audience("E-ROOM")).toBe("owner-shared");
+    expect(await audience("E-COWORKER")).toBe("other");
+    expect(await audience("E-APP")).toBe("other");
+    expect(await audience("E-MIXED")).toBe("other");
+    expect(await audience("E-MISSING")).toBe("other");
   });
 
   it("forgets the previous installer when a reconnect names nobody", async () => {

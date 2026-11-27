@@ -87,6 +87,7 @@ export async function createRunContext(
     channelId,
     historySearchBeforeSeq,
     nonOwnerChatRun,
+    ownerRules,
     peerMessage,
     task,
     thread,
@@ -194,6 +195,7 @@ export async function createRunContext(
     secrets: runSecrets,
     source: {
       ownerStartedRun,
+      ownerRules,
       meetingChat: parts.meetingChat,
       messagingChannelRun: nonOwnerChatRun,
       channelId,
