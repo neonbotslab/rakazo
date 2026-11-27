@@ -181,6 +181,7 @@ export const ROW_SECURITY_MODELS: ReadonlySet<string> = new Set([
   "UserVoicePreference",
   "UserActionApprovalRule",
   "UserActionAutoReviewPreference",
+  "UserHostPlugin",
   "SecurityEvent",
   "AuditEvent",
   "Page",

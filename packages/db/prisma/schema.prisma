@@ -125,6 +125,7 @@ model User {
   signupSurvey                SignupSurvey?
   computerRuns                ComputerRun[]
   devices                     UserDevice[]
+  hostPlugins                 UserHostPlugin[]
 
   @@unique([email])
   @@map("user")
@@ -2974,6 +2975,16 @@ model UserActionApprovalRule {
 
   @@unique([userId, effect, matchKind, matchValue])
   @@map("user_action_approval_rules")
+}
+
+model UserHostPlugin {
+  userId   String
+  user     User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  pluginId String
+  enabled  Boolean
+
+  @@id([userId, pluginId])
+  @@map("user_host_plugins")
 }
 
 model UserActionAutoReviewPreference {

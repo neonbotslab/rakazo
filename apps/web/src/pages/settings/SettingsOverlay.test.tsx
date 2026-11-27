@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 
+import { flush } from "@rakazo/core/test-async";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { ReactNode } from "react";
 import { act } from "react";
@@ -33,6 +34,27 @@ vi.mock("@rakazo/ui-web", () => ({
   >) => <div {...props}>{children}</div>,
   DialogTitle: ({ children }: { children?: ReactNode }) => <h2>{children}</h2>,
   DialogDescription: ({ children }: { children?: ReactNode }) => <p>{children}</p>,
+  Label: ({ children, htmlFor, ...props }: React.ComponentProps<"label">) => (
+    <label htmlFor={htmlFor} {...props}>
+      {children}
+    </label>
+  ),
+  Switch: ({
+    checked,
+    onCheckedChange,
+    ...props
+  }: React.ComponentProps<"button"> & {
+    checked: boolean;
+    onCheckedChange: (checked: boolean) => void;
+  }) => (
+    <button
+      type="button"
+      role="switch"
+      aria-checked={checked}
+      onClick={() => onCheckedChange(!checked)}
+      {...props}
+    />
+  ),
 }));
 
 vi.mock("./AccountSettingsOverlay", () => ({
@@ -42,15 +64,17 @@ vi.mock("./AccountSettingsOverlay", () => ({
 }));
 
 vi.mock("./UsageSettingsPanel", () => ({ UsageSettingsPanel: () => null }));
-const { memoryConfigs, memoryConfigChange, providerConfig, updaterStatus } = vi.hoisted(() => ({
-  memoryConfigs: [] as unknown[],
-  memoryConfigChange: { current: (_config: unknown) => {} },
-  providerConfig: vi.fn(async (_spaceId: string): Promise<unknown> => null),
-  updaterStatus: vi.fn(async (): Promise<unknown> => ({ installKind: "compose" })),
-}));
+const { hostPlugins, memoryConfigs, memoryConfigChange, providerConfig, updaterStatus } =
+  vi.hoisted(() => ({
+    hostPlugins: { list: vi.fn(async (): Promise<unknown[]> => []), setEnabled: vi.fn() },
+    memoryConfigs: [] as unknown[],
+    memoryConfigChange: { current: (_config: unknown) => {} },
+    providerConfig: vi.fn(async (_spaceId: string): Promise<unknown> => null),
+    updaterStatus: vi.fn(async (): Promise<unknown> => ({ installKind: "compose" })),
+  }));
 vi.mock("../../lib/query/rpc", () => ({
   rpc: { updater: { status: updaterStatus } },
-  createSpaceRpc: () => ({ memory: { providerConfig: () => providerConfig("") } }),
+  createSpaceRpc: () => ({ hostPlugins, memory: { providerConfig: () => providerConfig("") } }),
   selectedSpaceId: () => null,
   rpcForSpace: (spaceId: string) => ({
     memory: { providerConfig: () => providerConfig(spaceId) },
@@ -146,6 +170,8 @@ vi.mock("../../components/computers/ComputersUnavailableHint", () => ({
   computersAreUnavailable: () => false,
 }));
 
+import { QueryUserProvider } from "../../lib/query/query";
+import { spaceChanged } from "../../lib/query/space-changes";
 import { SettingsOverlay } from "./SettingsOverlay";
 
 const acme = { id: "space-a", name: "Acme" };
@@ -161,21 +187,23 @@ async function render(props: Partial<React.ComponentProps<typeof SettingsOverlay
     await act(async () => {
       root.render(
         <QueryClientProvider client={queryClient}>
-          <SettingsOverlay
-            name="Jamie"
-            timezone={null}
-            onTimezoneChange={async () => undefined}
-            labs={[]}
-            labsAvailable={["board"]}
-            onLabsChange={async () => undefined}
-            memoryConfig={null}
-            onMemoryConfigChange={() => undefined}
-            onClose={() => undefined}
-            section="general"
-            onSectionChange={() => undefined}
-            shellRpc={{} as never}
-            {...next}
-          />
+          <QueryUserProvider value="user-settings">
+            <SettingsOverlay
+              name="Jamie"
+              timezone={null}
+              onTimezoneChange={async () => undefined}
+              labs={[]}
+              labsAvailable={["board"]}
+              onLabsChange={async () => undefined}
+              memoryConfig={null}
+              onMemoryConfigChange={() => undefined}
+              onClose={() => undefined}
+              section="general"
+              onSectionChange={() => undefined}
+              shellRpc={{} as never}
+              {...next}
+            />
+          </QueryUserProvider>
         </QueryClientProvider>,
       );
     });
@@ -183,6 +211,7 @@ async function render(props: Partial<React.ComponentProps<typeof SettingsOverlay
   await rerender(props);
   return {
     container,
+    queryClient,
     rerender,
     cleanup: async () => {
       await act(async () => root.unmount());
@@ -210,6 +239,54 @@ it("lists the spaces under Spaces and opens the one picked", async () => {
     await act(async () => button(container, "Manage Beta").click());
     expect(onOpenSpace).toHaveBeenCalledWith("space-b");
   } finally {
+    await cleanup();
+  }
+});
+
+it("falls back to General when the account has no installed plugins", async () => {
+  const { container, cleanup } = await render({ section: "plugins" });
+  try {
+    expect(container.querySelector('[data-testid="settings-nav-plugins"]')).toBeNull();
+    expect(container.querySelector('[data-settings-section="general"]')).not.toBeNull();
+  } finally {
+    await cleanup();
+  }
+});
+
+it("saves a plugin switch and refreshes it when account preferences change", async () => {
+  let row = { id: "test/sample", name: "Test plugin", enabled: true };
+  hostPlugins.list.mockImplementation(async () => [row]);
+  hostPlugins.setEnabled.mockImplementation(async (input: { id: string; enabled: boolean }) => {
+    row = { ...row, enabled: input.enabled };
+    return row;
+  });
+  const { container, queryClient, cleanup } = await render({ section: "plugins" });
+  const pluginSwitch = () => container.querySelector<HTMLButtonElement>('[role="switch"]');
+  try {
+    await act(async () => {
+      await vi.waitFor(() => expect(pluginSwitch()).not.toBeNull());
+    });
+    expect(container.querySelector('[data-testid="settings-nav-plugins"]')?.textContent).toBe(
+      "Plugins",
+    );
+    expect(container.querySelector("label")?.textContent).toBe("Test plugin");
+    expect(pluginSwitch()?.getAttribute("aria-checked")).toBe("true");
+    await act(async () => pluginSwitch()?.click());
+    expect(hostPlugins.setEnabled).toHaveBeenCalledWith({ id: "test/sample", enabled: false });
+    await act(async () => {
+      await flush();
+    });
+    expect(pluginSwitch()?.getAttribute("aria-checked")).toBe("false");
+    expect(pluginSwitch()?.disabled).toBe(false);
+    row = { ...row, enabled: true };
+    await act(async () => {
+      await spaceChanged("preferences", queryClient);
+      await flush();
+    });
+    expect(pluginSwitch()?.getAttribute("aria-checked")).toBe("true");
+  } finally {
+    hostPlugins.list.mockReset();
+    hostPlugins.setEnabled.mockReset();
     await cleanup();
   }
 });

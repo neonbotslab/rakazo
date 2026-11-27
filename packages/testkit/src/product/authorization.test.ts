@@ -595,6 +595,8 @@ describeWithDatabase("API authorization and resource isolation", () => {
       ["accessGrants/list"],
       ["accessGrants/create"],
       ["accessGrants/revoke"],
+      ["hostPlugins/list"],
+      ["hostPlugins/setEnabled", { id: "test/sample", enabled: true }],
       ["preferences/update"],
       ["preferences/adoptTimezone"],
       ["bootstrap"],

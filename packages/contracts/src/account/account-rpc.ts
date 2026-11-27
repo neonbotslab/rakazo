@@ -9,6 +9,7 @@ import { ExportManifestSchema } from "./account-export.js";
 import { AiConsentQuerySchema, AiConsentStatusSchema } from "./ai-consent.js";
 import { AnalyticsModelSignInStepInput, AnalyticsScreenInput } from "./analytics.js";
 import { AuditEventListInputSchema, AuditEventPageSchema } from "./audit-events.js";
+import { HostPluginIdSchema, HostPluginPreferenceSchema } from "./host-plugins.js";
 import { AppBootstrapSchema, MeSchema, SignupSurveySchema } from "./me.js";
 import {
   AppLocaleSchema,
@@ -44,6 +45,12 @@ export const accountRpc = {
   },
   health: oc.output(z.object({ ok: z.literal(true), version: z.string() })),
   me: oc.output(MeSchema),
+  hostPlugins: {
+    list: oc.output(z.array(HostPluginPreferenceSchema)),
+    setEnabled: oc
+      .input(z.object({ id: HostPluginIdSchema, enabled: z.boolean() }))
+      .output(HostPluginPreferenceSchema),
+  },
   preferences: {
     update: oc
       .input(

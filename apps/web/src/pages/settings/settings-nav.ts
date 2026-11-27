@@ -11,6 +11,7 @@ import {
   Layers,
   MessageCircle,
   Monitor,
+  Puzzle,
   Settings,
   ShieldCheck,
   Volume2,
@@ -35,6 +36,7 @@ export function useSettingsNavItems(available: {
   billing: boolean;
   updates: boolean;
   labs: boolean;
+  plugins?: boolean;
 }): SettingsNavItem[] {
   const { t } = useLingui();
   return [
@@ -90,6 +92,7 @@ export function useSettingsNavItems(available: {
       ? [{ id: "computer" as const, label: t`Computers`, icon: Monitor }]
       : []),
     ...(available.labs ? [{ id: "labs" as const, label: t`Labs`, icon: FlaskConical }] : []),
+    ...(available.plugins ? [{ id: "plugins" as const, label: t`Plugins`, icon: Puzzle }] : []),
     { id: "usage", label: t`Usage`, icon: Gauge },
     ...(available.billing ? [{ id: "billing" as const, label: t`Billing`, icon: CreditCard }] : []),
     {

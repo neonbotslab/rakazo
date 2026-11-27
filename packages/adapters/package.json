@@ -12,6 +12,7 @@
     "./meeting-media": "./src/meetings/meeting-media-grant.ts",
     "./model-json": "./src/models/model-json.ts",
     "./personal-cli-runtime": "./src/cli-models/personal-cli-runtime.ts",
+    "./plugin-host": "./src/plugin-host/server-plugins.ts",
     "./wuying-screen-policy": "./src/providers/computer/wuying/wuying-screen-policy.ts",
     "./user-device-client": "./src/computers/host/user-device-client.ts"
   },

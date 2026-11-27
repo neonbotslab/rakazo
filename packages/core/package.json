@@ -10,6 +10,7 @@
       "development": "./src/index.ts",
       "default": "./src/index.ts"
     },
+    "./plugin-host": "./src/plugin-host/registry.ts",
     "./user-error": {
       "types": "./src/primitives/user-error.ts",
       "development": "./src/primitives/user-error.ts",

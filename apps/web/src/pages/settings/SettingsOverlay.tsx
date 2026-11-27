@@ -28,6 +28,7 @@ import { SETTINGS_CONTENT_WIDTH } from "../../components/settings/SettingsRows";
 import { VaultSettings } from "../../components/vault/VaultSettings";
 import { canChooseOwnComputer } from "../../lib/computers/computer-sandbox";
 import { desktopBridge } from "../../lib/platform/desktop";
+import { hostPluginsQuery } from "../../lib/query/host-plugins";
 import { useQueryUserId } from "../../lib/query/query";
 import type { RpcClient } from "../../lib/query/rpc";
 import { SpaceRpcProvider } from "../../lib/query/space-rpc";
@@ -47,6 +48,7 @@ import { MessagingSettingsPanel } from "./MessagingSettingsPanel";
 import type { OrganizationPage } from "./OrganizationSettingsPanel";
 import { OrganizationOptionsMenu, OrganizationSettingsPanel } from "./OrganizationSettingsPanel";
 import { PaymentWalletSettingsPanel } from "./PaymentWalletSettingsPanel";
+import { PluginSettingsPanel } from "./PluginSettingsPanel";
 import { SpaceSettingsPanel } from "./SpaceSettingsPanel";
 import { SpacesSettingsPanel } from "./SpacesSettingsPanel";
 import { useSettingsNavItems } from "./settings-nav";
@@ -147,7 +149,10 @@ export function SettingsOverlay({
       keepComputerRecovery ||
       computersAreUnavailable(sandboxProvider));
   const cloud = useCloudComputers();
-  const devices = useQuery(userDevicesQuery(useQueryUserId()));
+  const userId = useQueryUserId();
+  const devices = useQuery(userDevicesQuery(userId));
+  const { data: plugins = [] } = useQuery(hostPluginsQuery(userId));
+  const showPlugins = plugins.length > 0;
   const { thisComputer, plainHttp } = useThisComputer();
   const showComputer =
     showComputerSetup ||
@@ -165,7 +170,8 @@ export function SettingsOverlay({
     (requestedSection === "messaging" && !messagingEnabled) ||
     (requestedSection === "wallet" && !paymentWalletProvider) ||
     (requestedSection === "updates" && !showUpdates) ||
-    (requestedSection === "labs" && labsAvailable.length === 0)
+    (requestedSection === "labs" && labsAvailable.length === 0) ||
+    (requestedSection === "plugins" && !showPlugins)
       ? "general"
       : requestedSection;
   const panelBusy = memoryBusy || voiceBusy;
@@ -195,6 +201,7 @@ export function SettingsOverlay({
     billing: billingEnabled,
     updates: showUpdates,
     labs: labsAvailable.length > 0,
+    plugins: showPlugins,
   });
 
   const measureNav = () => {
@@ -229,6 +236,7 @@ export function SettingsOverlay({
     billingEnabled,
     messagingEnabled,
     paymentWalletProvider,
+    showPlugins,
     showUpdates,
     i18n.locale,
   ]);
@@ -490,6 +498,7 @@ export function SettingsOverlay({
                       onLabsChange={onLabsChange}
                     />
                   ) : null}
+                  {section === "plugins" ? <PluginSettingsPanel plugins={plugins} /> : null}
                   {section === "billing" && billingEnabled ? (
                     <BillingSettingsPanel client={shellRpc} />
                   ) : null}

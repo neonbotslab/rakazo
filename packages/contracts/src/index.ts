@@ -3,6 +3,7 @@ export * from "./account/ai-consent.js";
 export * from "./account/analytics.js";
 export * from "./account/audit-events.js";
 export * from "./account/auth.js";
+export * from "./account/host-plugins.js";
 export * from "./account/me.js";
 export * from "./account/preferences.js";
 export * from "./account/security-events.js";

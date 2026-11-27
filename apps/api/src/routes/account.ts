@@ -11,6 +11,7 @@ import {
   settleCallRequest,
   validateCreditOfferingChoice,
 } from "@rakazo/adapters";
+import { createHostPluginSettings } from "@rakazo/adapters/plugin-host";
 import type {
   ActionApprovalRule,
   Actor,
@@ -93,6 +94,7 @@ const defaultAutoReviewPreference = { enabled: true, skipApprovals: false };
 
 export function accountRoutes(ctx: RouterContext) {
   const { deps, os, authed } = ctx;
+  const hostPlugins = createHostPluginSettings(deps.prisma);
   const preferencesChanged = (userId: string) =>
     deps.events.publishSpaceChange?.(accountPreferencesChangesScope(userId), "preferences");
 
@@ -131,6 +133,17 @@ export function accountRoutes(ctx: RouterContext) {
     },
     health: os.health.handler(async () => ({ ok: true as const, version: "0.1.0" })),
     me: authed.me.handler(async ({ context }): Promise<Me> => meDto(deps, context.actor)),
+    hostPlugins: {
+      list: authed.hostPlugins.list.handler(({ context }) =>
+        hostPlugins.list(context.actor.userId),
+      ),
+      setEnabled: authed.hostPlugins.setEnabled.handler(async ({ context, input }) => {
+        const { userId } = context.actor;
+        const saved = await hostPlugins.setEnabled(userId, input);
+        await preferencesChanged(userId);
+        return saved;
+      }),
+    },
     cloudComputers: {
       list: authed.cloudComputers.list.handler(
         async ({ context }) => (await deps.billing?.cloudComputers(context.actor)) ?? null,
