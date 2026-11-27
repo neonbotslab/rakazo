@@ -176,6 +176,72 @@ it("loads only the opened call, using the saved step position for old replies", 
   expect(trace.textContent).toContain("Second result");
 });
 
+function openSavedTrace(
+  trace: NonNullable<Extract<ThreadMessage["blocks"][number], { kind: "steps" }>["trace"]>,
+) {
+  const blocks: ThreadMessage["blocks"] = [{ kind: "steps", steps: [], trace }];
+  renderView("bot", blocks, {
+    showToolActivity: true,
+    message: {
+      id: "message",
+      threadId: "thread",
+      seq: 1,
+      role: "bot",
+      createdAt: new Date().toISOString(),
+      blocks,
+      canInspectToolSteps: true,
+    },
+  });
+  const disclosure = container.querySelector('[data-testid="thinking-trace"]')!;
+  act(() => disclosure.querySelector("button")!.click());
+  return disclosure;
+}
+
+it("names the calendar subject from the call's Asked details", async () => {
+  toolCallDetail.mockResolvedValue({ arguments: '{"person":"Alex"}' });
+  const trace = openSavedTrace([
+    {
+      kind: "tool",
+      id: "call",
+      groupId: "call",
+      name: "list_calendar_events",
+      label: "List calendar events",
+      outcome: "succeeded",
+    },
+  ]);
+  const call = trace.querySelectorAll("button")[1]!;
+  act(() => call.click());
+  await act(async () => {
+    await flush();
+  });
+  expect(trace.textContent).toContain("Alex");
+  expect(call.textContent).toBe("Checked Alex's calendar");
+});
+
+it("names both calls in an open repeat group before either subcall is opened", async () => {
+  toolCallDetail.mockResolvedValue({ arguments: '{"person":"Alex"}' });
+  const trace = openSavedTrace(
+    ["first", "second"].map((id) => ({
+      kind: "tool",
+      id,
+      groupId: "first",
+      name: "list_calendar_events",
+      label: "List calendar events",
+      outcome: "succeeded",
+    })),
+  );
+  act(() => trace.querySelectorAll("button")[1]!.click());
+  await act(async () => {
+    await flush();
+  });
+  const subcalls = [...trace.querySelectorAll("button")].slice(2);
+  expect(subcalls.map((button) => button.textContent)).toEqual(["Alex · Call 1", "Alex · Call 2"]);
+  expect(subcalls.map((button) => button.getAttribute("aria-label"))).toEqual([
+    "Alex · Call 1",
+    "Alex · Call 2",
+  ]);
+});
+
 it("refreshes an open live call when it finishes and keeps the details expanded", async () => {
   const message: ThreadMessage = {
     id: "progress:run",

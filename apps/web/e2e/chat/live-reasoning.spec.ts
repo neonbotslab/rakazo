@@ -88,6 +88,15 @@ test("matches the timeline states across widths and themes", async ({ page }, te
         await expect(trace).toHaveCount(1);
         await expect(summary).toHaveAttribute("aria-expanded", "false");
         if (state !== "finished-closed") await summary.click();
+        if (state === "long") {
+          const labels = await trace.getByRole("button", { name: /Checked/ }).allTextContents();
+          expect(labels).toEqual(
+            expect.arrayContaining([
+              expect.stringContaining("Checked Alex's calendar1.4s"),
+              expect.stringContaining("Checked Alex's calendar for Wednesday ×21.5s"),
+            ]),
+          );
+        }
         if (state === "tool-open") {
           await trace.getByRole("button", { name: /Checked Dana/ }).click();
           await expect(trace.getByText("Open 1:00–4:30 PM Central")).toBeVisible();
