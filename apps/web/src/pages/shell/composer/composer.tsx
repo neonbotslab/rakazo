@@ -4,14 +4,12 @@ import type { AgentSkillCatalogEntry, ThreadMessage } from "@rakazo/contracts";
 import type { ComposerMention, ComposerMentionRange, SlashActionId } from "@rakazo/core";
 import {
   composerMentionQuery,
-  composerMentionsForPrompt,
   composerSelectedMentions,
   mentionChipKey,
   newClientId,
   replyAttachment,
   resolveComposerMentionEdit,
   resolveMentionPickerKey,
-  serializeComposerPrompt,
   updateComposerMentionBindings,
 } from "@rakazo/core";
 import { Button } from "@rakazo/ui-web";
@@ -31,7 +29,6 @@ import { useCallSession } from "../../../lib/calls/call-session";
 import { attachmentPickerAccept } from "../../../lib/composer/attachment-picker-accept";
 import {
   appendComposerDraftText,
-  beginComposerDraftSubmission,
   keepComposerRetryNonce,
   readComposerDraft,
   readComposerDraftBindings,
@@ -61,6 +58,7 @@ import {
   PendingAttachmentChips,
   SlashPicker,
 } from "./composer-parts";
+import { beginComposerSend, ComposerHeldSend, useComposerPluginSend } from "./composer-plugin-send";
 import { recordMessageSent } from "./github-star-prompt";
 import { HoldToTalkStrip, useHoldToTalk } from "./hold-to-talk";
 import { useComposerFileDrop } from "./use-composer-file-drop";
@@ -261,8 +259,6 @@ const ComposerBody = memo(function Composer({
         selectedSkill !== null ||
         pendingAttachments.length > 0;
       if (!appendDictation(text) || reviewFirst) return;
-      const clientNonce = newClientId();
-      retryNonce.current = clientNonce;
       queuedDictation.current = editRevision.current;
       setDictationSendDue(editRevision.current);
     },
@@ -272,8 +268,10 @@ const ComposerBody = memo(function Composer({
   useEffect(
     () =>
       subscribeComposerDraftAccepted(draftKey, (text) => {
-        if (compositionRef.current.text === text)
+        if (compositionRef.current.text === text) {
+          sendGate.cancel();
           commitComposition({ text: "", bindings: [] }, false);
+        }
         setMentionQuery(null);
         setSlashQuery(null);
       }),
@@ -299,34 +297,39 @@ const ComposerBody = memo(function Composer({
   const pageSession = usePageSession();
   const dock = pageSession?.dock ?? noDock;
   const openPageId = useSyncExternalStore(dock.subscribe, () => dock.get().page?.id ?? null);
-  // A draft reloaded without edits may still belong to a send whose answer never
-  // came; its nonce is stored beside it. Anything that would change the next
-  // payload (attachments, an armed reply, an open page) disqualifies the stored nonce.
+  // Only an unchanged, plain-text draft can recover its nonce after a reload.
   const [storedRetryNonce] = useState(() =>
     pendingAttachments.length === 0 && !replyTarget && openPageId === null
       ? readComposerRetryNonce(draftKey)
       : null,
   );
   const retryNonce = useRef(storedRetryNonce);
-  // Opening or closing a page counts as an edit, like a reply change.
-  const previousPageId = useRef(openPageId);
-  useEffect(() => {
-    if (previousPageId.current === openPageId) return;
-    previousPageId.current = openPageId;
-    markEdited();
-  }, [openPageId]);
   const replyId = replyTarget?.id ?? null;
   const quote = replyTarget ? (replyQuote ?? null) : null;
-  const previousReply = useRef({ id: replyId, quote });
+  const sendGate = useComposerPluginSend([
+    draftKey,
+    "botId" in artifactTarget ? artifactTarget.botId : artifactTarget.groupId,
+    openPageId,
+    replyId,
+    quote,
+    selectedSkill,
+    disabled,
+    sending,
+    ...pendingAttachments.flatMap(({ id, file }) => [id, file]),
+  ]);
+  const previousContext = useRef({ replyId, quote, openPageId });
   useEffect(() => {
-    if (previousReply.current.id !== replyId || previousReply.current.quote !== quote) {
+    const previous = previousContext.current;
+    if (
+      previous.replyId !== replyId ||
+      previous.quote !== quote ||
+      previous.openPageId !== openPageId
+    ) {
       markEdited();
-      previousReply.current = { id: replyId, quote };
+      previousContext.current = { replyId, quote, openPageId };
     }
-  }, [replyId, quote, onDraftEdited]);
-  // The words must reach the committed draft before send() reads it, so the
-  // send waits one render for the state appendDictation just queued.
-  // The due send holds the edit revision the dictation left.
+  }, [replyId, quote, openPageId, onDraftEdited]);
+  // Dictation sends after its edit commits and only at the revision it left.
   const [dictationSendDue, setDictationSendDue] = useState<number | null>(null);
   // The same due revision for send(), which reads it after its own await.
   const queuedDictation = useRef<number | null>(null);
@@ -334,11 +337,11 @@ const ComposerBody = memo(function Composer({
   // any edit in the meantime cancels the automatic send. It runs after the
   // reply effect above, so a reply armed in the same commit counts as an edit.
   useEffect(() => {
-    if (dictationSendDue === null || sending) return;
+    if (dictationSendDue === null || sending || !sendGate.ready || sendGate.blocked) return;
     setDictationSendDue(null);
     queuedDictation.current = null;
     if (editRevision.current === dictationSendDue) void send();
-  }, [dictationSendDue, sending]);
+  }, [dictationSendDue, sending, sendGate.ready, sendGate.blocked]);
   const {
     textareaRef,
     onTextareaScroll,
@@ -417,6 +420,7 @@ const ComposerBody = memo(function Composer({
     draft.trim().length > 0 || selectedSkill !== null || pendingAttachments.length > 0;
 
   function markEdited() {
+    sendGate.cancel();
     setLargePaste(null);
     onDraftEdited?.();
     editRevision.current += 1;
@@ -472,7 +476,7 @@ const ComposerBody = memo(function Composer({
   }
 
   async function send(imageHandling?: "file") {
-    if (!canSend || sending || disabled) return;
+    if (!canSend || sending || disabled || sendGate.blocked) return;
     setLargePaste(null);
     const revision = editRevision.current;
     // Recovery rebuilds the draft from text alone, so only a plain-text send —
@@ -483,73 +487,85 @@ const ComposerBody = memo(function Composer({
       pendingAttachments.length === 0 &&
       selectedSkill === null &&
       openPageId === null;
-    const clientNonce =
+    const recoveredNonce =
       retryNonce.current ??
       // A chat reopened before its unsettled send failed has not edited since
       // mount, so the nonce stored beside the saved draft is still this draft's.
-      (revision === 0 && nonceRecoverable ? readComposerRetryNonce(draftKey) : null) ??
-      newClientId();
-    retryNonce.current = null;
-    const submitted = compositionRef.current;
-    const text = serializeComposerPrompt(submitted.text, selectedSkill);
-    const mentions = composerMentionsForPrompt(submitted.text, selectedSkill, submitted.bindings);
-    const submission = beginComposerDraftSubmission(draftKey, draft);
-    commitComposition({ text: "", bindings: [] }, false);
-    setMentionQuery(null);
-    setMentionHighlightKey(null);
-    setSlashQuery(null);
-    setSelectedSkill(null);
-    try {
-      const accepted =
-        (await (imageHandling
-          ? onSend(text, mentions, clientNonce, imageHandling)
-          : onSend(text, mentions, clientNonce))) !== false;
-      settleComposerDraftSubmission(draftKey, submission, accepted);
-      if (accepted) {
-        recordMessageSent();
-        return;
-      }
-    } catch {
-      settleComposerDraftSubmission(draftKey, submission, false);
-      // A rejected callback leaves acceptance unknown; do not restore a possible
-      // send. The saved draft still holds the words; only a recoverable plain
-      // text send keeps its nonce with them, so the retry is not mistaken for
-      // a reply-linked or otherwise different message.
-      if (nonceRecoverable) keepComposerRetryNonce(draftKey, submission, clientNonce);
-      return;
-    }
-    // A dictation queued behind this send, and no other edit since, joins the failed
-    // words instead of going out alone; the send's error stays.
-    if (queuedDictation.current === revision + 1 && editRevision.current === revision + 1) {
-      queuedDictation.current = null;
-      setDictationSendDue(null);
+      (revision === 0 && nonceRecoverable ? readComposerRetryNonce(draftKey) : null);
+    const original = compositionRef.current;
+    return sendGate.start(
+      { draftKey, revision, text: original.text, attachmentCount: pendingAttachments.length },
+      recoveredNonce !== null,
+      submit,
+    );
+
+    async function submit(rewritten: string) {
+      if (!rewritten.trim() && selectedSkill === null && pendingAttachments.length === 0) return;
+      const clientNonce = recoveredNonce ?? newClientId();
       retryNonce.current = null;
-      const queued = compositionRef.current;
-      const words = queued.text;
-      const restored = { text: `${submitted.text} ${words}`, bindings: submitted.bindings };
-      if (mountedRef.current && draftKeyRef.current === draftKey) {
-        commitComposition(restored);
-        setSelectedSkill(selectedSkill);
+      const { submitted, text, mentions, submission } = beginComposerSend(
+        draftKey,
+        original,
+        rewritten,
+        selectedSkill,
+      );
+      commitComposition({ text: "", bindings: [] }, false);
+      setMentionQuery(null);
+      setMentionHighlightKey(null);
+      setSlashQuery(null);
+      setSelectedSkill(null);
+      try {
+        const accepted =
+          (await (imageHandling
+            ? onSend(text, mentions, clientNonce, imageHandling)
+            : onSend(text, mentions, clientNonce))) !== false;
+        settleComposerDraftSubmission(draftKey, submission, accepted);
+        if (accepted) {
+          recordMessageSent();
+          return;
+        }
+      } catch {
+        settleComposerDraftSubmission(draftKey, submission, false);
+        // A rejected callback leaves acceptance unknown; do not restore a possible
+        // send. The saved draft still holds the words; only a recoverable plain
+        // text send keeps its nonce with them, so the retry is not mistaken for
+        // a reply-linked or otherwise different message.
+        if (nonceRecoverable) keepComposerRetryNonce(draftKey, submission, clientNonce);
         return;
       }
-      // Once the chat was left, a composer reopened for it owns the saved draft; only a draft
-      // still holding just these words, mentions included, is this send's to restore, and the
-      // reopened field follows it. The same spelling bound to a mention there is a newer edit.
-      if (
-        readComposerDraft(draftKey) === words &&
-        JSON.stringify(readComposerDraftBindings(draftKey)) === JSON.stringify(queued.bindings)
-      )
-        replaceComposerDraft(draftKey, restored.text, restored.bindings);
-      return;
+      // A dictation queued behind this send, and no other edit since, joins the failed
+      // words instead of going out alone; the send's error stays.
+      if (queuedDictation.current === revision + 1 && editRevision.current === revision + 1) {
+        queuedDictation.current = null;
+        setDictationSendDue(null);
+        retryNonce.current = null;
+        const queued = compositionRef.current;
+        const words = queued.text;
+        const restored = { text: `${submitted.text} ${words}`, bindings: submitted.bindings };
+        if (mountedRef.current && draftKeyRef.current === draftKey) {
+          commitComposition(restored);
+          setSelectedSkill(selectedSkill);
+          return;
+        }
+        // Once the chat was left, a composer reopened for it owns the saved draft; only a draft
+        // still holding just these words, mentions included, is this send's to restore, and the
+        // reopened field follows it. The same spelling bound to a mention there is a newer edit.
+        if (
+          readComposerDraft(draftKey) === words &&
+          JSON.stringify(readComposerDraftBindings(draftKey)) === JSON.stringify(queued.bindings)
+        )
+          replaceComposerDraft(draftKey, restored.text, restored.bindings);
+        return;
+      }
+      // Restore only an untouched draft, retaining its nonce for an unchanged retry.
+      // This composer still carries the reply and attachments the send carried, so
+      // the in-memory nonce is safe here; the stored one is only for plain text.
+      if (editRevision.current !== revision) return;
+      retryNonce.current = clientNonce;
+      if (nonceRecoverable) keepComposerRetryNonce(draftKey, submission, clientNonce);
+      commitComposition(submitted, false);
+      setSelectedSkill(selectedSkill);
     }
-    // Restore only an untouched draft, retaining its nonce for an unchanged retry.
-    // This composer still carries the reply and attachments the send carried, so
-    // the in-memory nonce is safe here; the stored one is only for plain text.
-    if (editRevision.current !== revision) return;
-    retryNonce.current = clientNonce;
-    if (nonceRecoverable) keepComposerRetryNonce(draftKey, submission, clientNonce);
-    commitComposition(submitted, false);
-    setSelectedSkill(selectedSkill);
   }
 
   function handlePaste(event: ClipboardEvent<HTMLTextAreaElement>) {
@@ -604,8 +620,7 @@ const ComposerBody = memo(function Composer({
 
   // Arming or retargeting a reply unmounts the control that started it, so
   // focus would drop to <body>; announce on start and when the target changes.
-  // A same-id rerender (e.g. the display name resolving after arming) must not
-  // cancel the pending announcement.
+  // A same-ID rerender must not cancel the pending announcement.
   useEffect(() => {
     const prev = prevReplyTarget.current;
     prevReplyTarget.current = replyTarget ?? null;
@@ -640,12 +655,16 @@ const ComposerBody = memo(function Composer({
     >
       {fileDropOverlay}
       <div role="status" data-testid="composer-announcement" className="sr-only">
-        {replyAnnouncement}
+        {sendGate.held ? t`Message held` : replyAnnouncement}
       </div>
       <ComposerError
-        sendError={sendError}
+        sendError={sendError ?? (sendGate.failed ? t`Could not prepare the message` : null)}
         imageConfirmation={imageConfirmation}
-        onSendAsFile={imageConfirmation && !sending ? () => void send("file") : undefined}
+        onSendAsFile={
+          imageConfirmation && !sending && !sendGate.blocked && sendGate.ready
+            ? () => void send("file")
+            : undefined
+        }
         runError={runError}
         runErrorId={runErrorId}
         onRunErrorPresented={onRunErrorPresented}
@@ -664,6 +683,7 @@ const ComposerBody = memo(function Composer({
           attachment={replyAttachment(replyTarget.blocks)}
           target={artifactTarget}
           onDismiss={() => {
+            sendGate.cancel();
             replyAnnouncementKind.current = "cancelled";
             setPendingAnnounce(null);
             onClearReply?.();
@@ -724,6 +744,7 @@ const ComposerBody = memo(function Composer({
           onAction={runSlashAction}
         />
       ) : null}
+      <ComposerHeldSend gate={sendGate} textarea={textareaRef} />
       <div
         ref={composerBarRef}
         data-testid="composer-bar"
@@ -933,7 +954,7 @@ const ComposerBody = memo(function Composer({
           running={running}
           showTalk={Boolean(phoneCallsEnabled) && draft.trim().length === 0}
           talkDisabled={disabled || onCall}
-          sendDisabled={sending || !canSend || disabled}
+          sendDisabled={sending || !canSend || disabled || sendGate.blocked || !sendGate.ready}
           stopDisabled={sending}
           sendColors={sendColors}
           modelPicker={modelPicker}

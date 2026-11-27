@@ -62,8 +62,12 @@ function applyWebNotificationHooks(notice: PluginNotice, plugins: readonly WebPl
 }
 
 /** Undefined while the signed-in account's plugin list first loads. */
+export function useEnabledWebPlugins() {
+  return useContext(EnabledWebPlugins);
+}
+
 export function useWebNotificationPolicy() {
-  const enabled = useContext(EnabledWebPlugins);
+  const enabled = useEnabledWebPlugins();
   return useMemo(
     () => enabled && ((notice: PluginNotice) => applyWebNotificationHooks(notice, enabled)),
     [enabled],

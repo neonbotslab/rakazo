@@ -4,6 +4,11 @@ import { i18n } from "@lingui/core";
 import type { AgentSkillCatalogEntry, BillingStatus, ThreadMessage } from "@rakazo/contracts";
 import type { ComposerMention } from "@rakazo/core";
 import { MODEL_REQUIRED_SEND_ERROR, resolveComposerSendPlan } from "@rakazo/core";
+import type {
+  PluginComposerDecision,
+  PluginDefinition,
+  WebPluginHooks,
+} from "@rakazo/core/plugin-host";
 import type { Deferred } from "@rakazo/core/test-async";
 import { deferred } from "@rakazo/core/test-async";
 import type { ComponentProps, ReactNode } from "react";
@@ -19,6 +24,10 @@ vi.mock("@lingui/react/macro", () => {
 });
 
 const billing = vi.hoisted(() => ({ status: null as BillingStatus | null }));
+const composerPlugins = vi.hoisted(() => ({ enabled: [] as PluginDefinition<WebPluginHooks>[] }));
+vi.mock("../../../lib/plugin-host/web-plugins", () => ({
+  useEnabledWebPlugins: () => composerPlugins.enabled,
+}));
 vi.mock("../../../components/billing/SubscriptionGate", () => ({
   useBilling: () => ({ status: billing.status, showPlans: () => {} }),
 }));
@@ -45,6 +54,7 @@ afterEach(() => {
   container = null;
   localStorage.clear();
   billing.status = null;
+  composerPlugins.enabled = [];
 });
 
 const bob: ComposerMention = { kind: "bot", id: "bot-2", name: "Bob" };
@@ -112,6 +122,94 @@ function rerenderComposer(overrides: Partial<ComponentProps<typeof Composer>>) {
   composerProps = { ...composerProps, ...overrides };
   act(() => root?.render(<Composer {...composerProps} />));
 }
+
+function composerPlugin(
+  id: `test/${string}`,
+  beforeSendMessage: NonNullable<WebPluginHooks["beforeSendMessage"]>,
+) {
+  composerPlugins.enabled.push({
+    manifest: { id, name: id, version: "1.0.0", apiVersion: 1 },
+    hooks: { beforeSendMessage },
+  });
+}
+
+it("resumes a held draft once and preserves the selected mention through a rewrite", async () => {
+  composerPlugin("test/hold", () => ({ kind: "hold" }));
+  composerPlugin("test/rewrite", (draft) => ({ kind: "rewrite", text: `please ${draft.text}` }));
+  const onSend = vi.fn().mockResolvedValue(true);
+  const textarea = renderComposer(onSend);
+  type(textarea, "ask @Bo");
+  pressEnter(textarea);
+  pressEnter(textarea);
+  await act(async () => {});
+  expect(textarea.value).toBe("ask @Bob ");
+  expect(onSend).not.toHaveBeenCalled();
+  const resume = container?.querySelector<HTMLButtonElement>('button[aria-label="Resume send"]');
+  expect(resume).not.toBeNull();
+  await act(async () => {
+    resume?.click();
+    resume?.click();
+  });
+  expect(onSend).toHaveBeenCalledExactlyOnceWith("please ask @Bob", [bob], expect.any(String));
+});
+
+it("drops a pending plugin decision after the attachments change", async () => {
+  const decision = deferred<PluginComposerDecision>();
+  composerPlugin("test/check", () => decision.promise);
+  const onSend = vi.fn().mockResolvedValue(true);
+  const textarea = renderComposer(onSend, {
+    pendingAttachments: [{ id: "first", threadKey: "bot-1", file: new File(["a"], "a.txt") }],
+  });
+  type(textarea, "draft to send");
+  pressEnter(textarea);
+  rerenderComposer({
+    pendingAttachments: [{ id: "second", threadKey: "bot-1", file: new File(["b"], "b.txt") }],
+  });
+  await act(async () => decision.resolve({ kind: "continue" }));
+  expect(onSend).not.toHaveBeenCalled();
+  expect(textarea.value).toBe("draft to send");
+});
+
+it("retries the saved rewritten draft with its nonce without running the plugin again", async () => {
+  const rewrite = vi.fn<NonNullable<WebPluginHooks["beforeSendMessage"]>>((draft) => ({
+    kind: "rewrite",
+    text: `${draft.text} revised`,
+  }));
+  composerPlugin("test/rewrite", rewrite);
+  const onSend = vi
+    .fn()
+    .mockRejectedValueOnce(new Error("Connection lost"))
+    .mockResolvedValue(true);
+  const textarea = renderComposer(onSend);
+  type(textarea, "draft");
+  pressEnter(textarea);
+  await act(async () => {});
+  const first = onSend.mock.calls[0];
+  expect(first).toEqual(["draft revised", [], expect.any(String)]);
+  act(() => root?.render(<Composer key="reconnected" {...composerProps} />));
+  const restored = container!.querySelector("textarea")!;
+  expect(restored.value).toBe("draft revised");
+  pressEnter(restored);
+  await act(async () => {});
+  expect(onSend.mock.calls[1]).toEqual(first);
+  expect(rewrite).toHaveBeenCalledOnce();
+});
+
+it("cancels a held send while leaving the draft editable and focused", async () => {
+  composerPlugin("test/hold", () => ({ kind: "hold" }));
+  const onSend = vi.fn().mockResolvedValue(true);
+  const textarea = renderComposer(onSend);
+  type(textarea, "unfinished message");
+  pressEnter(textarea);
+  await act(async () => {});
+  const cancel = container?.querySelector<HTMLButtonElement>('button[aria-label="Cancel send"]');
+  expect(cancel).not.toBeNull();
+  act(() => cancel?.click());
+  expect(textarea.value).toBe("unfinished message");
+  expect(document.activeElement).toBe(textarea);
+  expect(container?.querySelector('button[aria-label="Resume send"]')).toBeNull();
+  expect(onSend).not.toHaveBeenCalled();
+});
 
 it("colors the send button like the bot's user bubbles", () => {
   renderComposer(async () => true, {

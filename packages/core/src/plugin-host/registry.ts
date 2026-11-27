@@ -106,6 +106,20 @@ export type PluginNoticeDecision =
   | { kind: "suppress" }
   | { kind: "patch"; title?: string; body?: string; silent?: true };
 
+export interface PluginComposerDraft {
+  readonly draftKey: string;
+  readonly revision: number;
+  readonly text: string;
+  readonly attachmentCount: number;
+}
+
+export type PluginComposerDecision =
+  | { kind: "continue" }
+  | { kind: "rewrite"; text: string }
+  | { kind: "hold" }
+  | { kind: "cancel" };
+
 export interface WebPluginHooks {
+  beforeSendMessage?(draft: PluginComposerDraft): PluginDecision<PluginComposerDecision>;
   onNotification?(notice: PluginNotice): PluginNoticeDecision;
 }

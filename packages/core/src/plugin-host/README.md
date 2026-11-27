@@ -13,3 +13,5 @@ Users enable installed plugins from **Settings → Plugins**. The choice is stor
 `onTurnFinished(event)` is a server hook for a committed completed, failed, or cancelled run. Rakazo records one event per run. A retry carries the same `eventId`. Use it as the idempotency key for external work the hook performs.
 
 `onNotification(notice)` is a Web hook. Return `keep`, `suppress`, or `patch` with replacement text or `silent: true`. Rakazo decides eligibility and click targets before calling the hook.
+
+`beforeSendMessage(draft)` runs in Web before a fresh send. Return `continue`, rewrite the text with `rewrite`, leave the draft unsent with `cancel`, or pause with `hold`. **Resume** continues with the next hook. Editing the held draft invalidates the hold.
