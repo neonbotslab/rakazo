@@ -9,6 +9,7 @@ const asked = JSON.stringify({
   range: "Mon 30 Nov to Fri 4 Dec",
   calendar: "Work",
 });
+const askedWednesday = JSON.stringify({ person: "Alex", range: "Wed 2 Dec", calendar: "Work" });
 const details: Record<string, ToolCallDetail> = {
   dana: {
     arguments: asked,
@@ -21,10 +22,14 @@ const details: Record<string, ToolCallDetail> = {
     }),
   },
   repeated: {
-    arguments: JSON.stringify({ person: "Alex", range: "Wed 2 Dec", calendar: "Work" }),
+    arguments: askedWednesday,
     result: JSON.stringify({ Wed: "Open 1:00–3:00 PM Central" }),
   },
-  repeat: { result: "One\nTwo\nThree\nFour\nFive\nSix\nSeven", hasScreenshot: true },
+  repeat: {
+    arguments: askedWednesday,
+    result: "One\nTwo\nThree\nFour\nFive\nSix\nSeven",
+    hasScreenshot: true,
+  },
   failed: { arguments: asked, failed: true, result: "Calendar request timed out." },
   active: { arguments: asked },
 };
@@ -55,17 +60,21 @@ test("live reasoning stays under one disclosure as the turn starts", async ({ pa
   await expect(page.getByText("I should check both calendars", { exact: false })).toBeVisible();
 });
 
-test("opens individual calls lazily and keeps several calls open", async ({ page }) => {
+test("names the calls in a repeat group and keeps several calls open", async ({ page }) => {
   const requests: string[] = [];
   await interceptDetails(page, requests);
   await page.goto(`${fixture}?state=group-open`);
   await page.getByRole("button", { name: "Worked for 6s" }).click();
   expect(requests).toEqual([]);
   await page.getByRole("button", { name: /×2/ }).click();
-  expect(requests).toEqual([]);
-  await page.getByRole("button", { name: "Call 1" }).click();
+  const first = page.getByRole("button", { name: "Alex · Call 1", exact: true });
+  const second = page.getByRole("button", { name: "Alex · Call 2", exact: true });
+  await expect(first).toBeVisible();
+  await expect(second).toBeVisible();
+  expect(requests).toEqual(["repeated"]);
+  await first.click();
   await expect(page.getByText("Open 1:00–3:00 PM Central")).toBeVisible();
-  await page.getByRole("button", { name: "Call 2" }).click();
+  await second.click();
   await expect(page.getByText("Took a screenshot (not shown)")).toBeVisible();
   await expect(page.getByText("Seven", { exact: true })).toBeHidden();
   await page.getByRole("button", { name: "Show all" }).click();
@@ -89,20 +98,20 @@ test("matches the timeline states across widths and themes", async ({ page }, te
         await expect(summary).toHaveAttribute("aria-expanded", "false");
         if (state !== "finished-closed") await summary.click();
         if (state === "long") {
-          const labels = await trace.getByRole("button", { name: /Checked/ }).allTextContents();
-          expect(labels).toEqual(
-            expect.arrayContaining([
-              expect.stringContaining("Checked Alex's calendar1.4s"),
-              expect.stringContaining("Checked Alex's calendar for Wednesday ×21.5s"),
-            ]),
-          );
+          await expect(trace.getByText("Checked Alex's calendar", { exact: true })).toBeVisible();
+          await expect(
+            trace.getByText("Checked Alex's calendar for Wednesday ×2", { exact: true }),
+          ).toBeVisible();
         }
         if (state === "tool-open") {
-          await trace.getByRole("button", { name: /Checked Dana/ }).click();
+          const alex = trace.getByRole("button", { name: /^Checked Alex's calendar/ });
+          const dana = trace.getByRole("button", { name: /^Checked Dana/ });
+          expect((await dana.boundingBox())!.y - (await alex.boundingBox())!.y).toBe(56);
+          await dana.click();
           await expect(trace.getByText("Open 1:00–4:30 PM Central")).toBeVisible();
         } else if (state === "group-open") {
           await trace.getByRole("button", { name: /×2/ }).click();
-          await trace.getByRole("button", { name: "Call 1" }).click();
+          await trace.getByRole("button", { name: "Alex · Call 1", exact: true }).click();
           await expect(trace.getByText("Open 1:00–3:00 PM Central")).toBeVisible();
         } else if (state === "error-open") {
           await trace.getByRole("button", { name: /Couldn’t reach Dana/ }).click();

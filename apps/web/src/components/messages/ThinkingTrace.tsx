@@ -63,23 +63,21 @@ function personFrom(detail?: ToolCallDetail | null): string | undefined {
   if (!value || typeof value !== "object" || !("person" in value)) return undefined;
   const person = value.person;
   return typeof person === "string" && person.length <= 64 && !/\s{2}|[\r\n]/.test(person)
-    ? person
+    ? person.split(" ")[0]
     : undefined;
 }
 
-function useToolLabel(call: TraceCall, detail?: ToolCallDetail | null) {
+function useToolLabel(call: TraceCall, subject?: string) {
   const { i18n, t } = useLingui();
-  const outcome = detail?.failed ? "failed" : call.outcome;
+  const { outcome } = call;
   const action = call.name?.toLowerCase().replaceAll(" ", "_");
   const known =
     action && Object.hasOwn(actions, action) ? actions[action as ActionName] : undefined;
-  const person = action === "list_calendar_events" ? personFrom(detail) : undefined;
-  const subject = person?.split(" ")[0];
-  if (subject) {
+  if (action === "list_calendar_events" && subject) {
     if (outcome === "running") return t`Checking ${subject}’s calendar`;
     if (outcome === "failed") return t`Couldn't reach ${subject}’s calendar`;
     if (outcome === "stopped") return t`Stopped checking ${subject}’s calendar`;
-    return t`Checked ${subject}’s calendar`;
+    return t`Checked ${subject}'s calendar`;
   }
   const name = readableName(call.label);
   if (outcome === "stopped") return t`Stopped ${name}`;
@@ -244,13 +242,15 @@ function ToolRow({ calls, source }: { calls: TraceCall[]; source?: DetailSource 
   const id = useId();
   const first = calls[0]!;
   const single = calls.length === 1;
-  const { detail, pending, error } = useCallDetail(first, source, open && single);
+  const rowSource = single || !first.legacy ? source : undefined;
+  const { detail, pending, error } = useCallDetail(first, rowSource, open);
   const outcome = calls.some((call) => call.outcome === "running")
     ? "running"
     : detail?.failed || calls.some((call) => call.outcome === "failed")
       ? "failed"
       : (calls.find((call) => call.outcome === "stopped")?.outcome ?? first.outcome);
-  const label = useToolLabel({ ...first, outcome }, single ? detail : undefined);
+  const person = personFrom(detail);
+  const label = useToolLabel({ ...first, outcome }, person);
   const sum = calls.every((call) => call.durationMs === undefined)
     ? undefined
     : calls.reduce((total, call) => total + (call.durationMs ?? 0), 0);
@@ -295,7 +295,13 @@ function ToolRow({ calls, source }: { calls: TraceCall[]; source?: DetailSource 
           ) : (
             <ul className="list-none">
               {calls.map((call, index) => (
-                <Subcall key={call.id} call={call} number={index + 1} source={source} />
+                <Subcall
+                  key={call.id}
+                  call={call}
+                  number={index + 1}
+                  source={source}
+                  groupPerson={person}
+                />
               ))}
             </ul>
           ))}
@@ -308,16 +314,19 @@ function Subcall({
   call,
   number,
   source,
+  groupPerson,
 }: {
   call: TraceCall;
   number: number;
   source?: DetailSource;
+  groupPerson?: string;
 }) {
   const { t } = useLingui();
   const [open, setOpen] = useState(false);
   const id = useId();
+  const labelId = `${id}-label`;
   const { detail, pending, error } = useCallDetail(call, source, open);
-  const person = personFrom(detail)?.split(" ")[0];
+  const person = personFrom(detail) || groupPerson;
   const label = t`Call ${number}`;
   return (
     <li className="border-border [&+li]:border-t">
@@ -326,15 +335,15 @@ function Subcall({
         className={cn(triggerClass, "trace-sub-trigger hover:bg-background/55")}
         aria-expanded={open}
         aria-controls={id}
-        aria-label={label}
+        aria-labelledby={labelId}
         onClick={() => setOpen(!open)}
       >
-        <span dir="auto" className="min-w-0 wrap-anywhere">
+        <span id={labelId} dir="auto" className="min-w-0 wrap-anywhere">
           {person ? (
-            <span className="inline-flex flex-wrap gap-x-2">
-              <span>{person}</span>
-              <span className="text-muted-foreground">{label}</span>
-            </span>
+            <>
+              {person}
+              <span className="text-muted-foreground"> · {label}</span>
+            </>
           ) : (
             label
           )}

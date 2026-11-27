@@ -236,10 +236,6 @@ it("names both calls in an open repeat group before either subcall is opened", a
   });
   const subcalls = [...trace.querySelectorAll("button")].slice(2);
   expect(subcalls.map((button) => button.textContent)).toEqual(["Alex · Call 1", "Alex · Call 2"]);
-  expect(subcalls.map((button) => button.getAttribute("aria-label"))).toEqual([
-    "Alex · Call 1",
-    "Alex · Call 2",
-  ]);
 });
 
 it("refreshes an open live call when it finishes and keeps the details expanded", async () => {
