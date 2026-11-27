@@ -851,7 +851,7 @@ export const Transcript = memo(function Transcript({
                     >
                       {botHeader ? (
                         <div
-                          className="mt-(--space-6) mb-1 truncate text-left text-label text-foreground"
+                          className="mt-6 mb-1 truncate text-left text-label text-foreground"
                           data-testid="bot-sender-name"
                           dir="auto"
                         >
