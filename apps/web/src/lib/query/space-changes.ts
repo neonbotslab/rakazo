@@ -16,6 +16,7 @@ const READS: Record<ReadChangeKind, readonly Procedure[]> = {
     ["approvalRules", "list"],
     ["approvalRules", "effective"],
     ["autoReview", "get"],
+    ["hostPlugins", "chatCards"],
     ["hostPlugins", "list"],
     ["spaceSettings", "overrides"],
   ],
@@ -27,6 +28,7 @@ const READS: Record<ReadChangeKind, readonly Procedure[]> = {
   routines: [["routines", "list"]],
   nativeCalendar: [],
   meetingCalendar: [["meetingCalendar", "upcoming"]],
+  pluginCards: [["hostPlugins", "chatCards"]],
   meetings: [
     ["meetings", "list"],
     ["meetings", "transcript"],

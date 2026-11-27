@@ -22,6 +22,7 @@ interface TableSpec {
     | "botEmailMessage"
     | "meetingSession"
     | "nativeCalendarRequest"
+    | "hostPluginTaskSnapshot"
     | "task";
   /** Scans return them in this order as `values`. */
   columns: string[];
@@ -41,6 +42,17 @@ interface ScannedRow {
 }
 
 const TABLES: TableSpec[] = [
+  {
+    model: "HostPluginTaskSnapshot",
+    delegate: "hostPluginTaskSnapshot",
+    columns: ["cards"],
+    json: true,
+    scan: (cursor, limit) => Prisma.sql`
+      SELECT id, jsonb_build_array(cards) AS values, "spaceId", "botId" AS owner
+      FROM host_plugin_task_snapshots WHERE id > ${cursor} ORDER BY id LIMIT ${limit}`,
+    writePlaintext: (id, row) => Prisma.sql`
+      UPDATE host_plugin_task_snapshots SET cards = ${JSON.stringify(row.cards)}::jsonb WHERE id = ${id}`,
+  },
   {
     model: "NativeCalendarRequest",
     delegate: "nativeCalendarRequest",
@@ -415,6 +427,10 @@ export async function contentEncryptionStatus(
     SELECT 'native_calendar_requests', count(*) FILTER (WHERE operation IS NOT NULL OR result IS NOT NULL),
       count(*) FILTER (WHERE NOT jsonb_exists(operation, '$sealed') OR NOT jsonb_exists(result, '$sealed'))
       FROM native_calendar_requests
+    UNION ALL
+    SELECT 'host_plugin_task_snapshots', count(*), count(*) FILTER (WHERE NOT CASE jsonb_typeof(cards)
+      WHEN 'array' THEN jsonb_array_length(cards) = 0 OR jsonb_exists(cards->0, '$sealed')
+      ELSE false END) FROM host_plugin_task_snapshots
   `;
     },
     { timeout: 60 * 60_000 },

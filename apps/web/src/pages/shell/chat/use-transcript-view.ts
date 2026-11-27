@@ -11,6 +11,7 @@ import {
 import type { GroupAvatarMember } from "@rakazo/ui-web";
 import { useCallback, useMemo } from "react";
 import type { ArtifactTarget } from "../../../lib/pages/artifact-open";
+import { useHostPluginChatCards } from "../../../lib/plugin-host/chat-cards";
 import { FALLBACK_BOT_COLOR } from "./chat-shared";
 import { resolveTranscriptMemberName as groupTranscriptMemberName } from "./transcript-member-name";
 
@@ -59,6 +60,7 @@ export function useTranscriptView({
     () => (inGroup ? { groupId: groupId ?? "" } : { botId: active?.id ?? "" }),
     [active?.id, groupId, inGroup],
   );
+  const taskCards = useHostPluginChatCards(meId, inGroup ? undefined : active);
   const transcriptMembers = activeSnapshot?.members ?? activeGroup?.members;
   const resolveBot = useCallback(
     (botId: string) => {
@@ -99,6 +101,7 @@ export function useTranscriptView({
     transcriptProps: {
       transcript,
       artifactTarget,
+      taskCards,
       olderCursor: activeSnapshot?.olderCursor ?? null,
       answerableAskIds,
       dismissableAskIds,

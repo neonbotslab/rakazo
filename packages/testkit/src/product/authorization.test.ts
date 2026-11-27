@@ -597,6 +597,7 @@ describeWithDatabase("API authorization and resource isolation", () => {
       ["accessGrants/revoke"],
       ["hostPlugins/list"],
       ["hostPlugins/setEnabled", { id: "test/sample", enabled: true }],
+      ["hostPlugins/chatCards", { botId: "bot-1" }],
       ["preferences/update"],
       ["preferences/adoptTimezone"],
       ["bootstrap"],

@@ -21,9 +21,9 @@ export async function dispatchRunTerminalEvent(
   prisma: PrismaClient,
   runId: string,
   {
-    registry = serverPlugins,
+    registry = serverPlugins(),
     signal,
-  }: { registry?: typeof serverPlugins; signal?: AbortSignal } = {},
+  }: { registry?: ReturnType<typeof serverPlugins>; signal?: AbortSignal } = {},
 ): Promise<void> {
   return runAsSystem("dispatch a committed plugin terminal event", () =>
     withLease(prisma, `${topic}:${runId}`, { ttlMs: leaseMs, signal }, async (lease) => {
@@ -78,12 +78,12 @@ export async function followRunTerminalEvents({
   prisma,
   realtime,
   jobs,
-  registry = serverPlugins,
+  registry = serverPlugins(),
 }: {
   prisma: PrismaClient;
   realtime: RealtimeFanout;
   jobs: Pick<JobPublisher, "cancel" | "enqueue">;
-  registry?: typeof serverPlugins;
+  registry?: ReturnType<typeof serverPlugins>;
 }): Promise<() => Promise<void>> {
   const stop = new AbortController();
   const deliver = async (runId: string) => {

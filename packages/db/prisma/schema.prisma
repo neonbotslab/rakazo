@@ -126,6 +126,7 @@ model User {
   computerRuns                ComputerRun[]
   devices                     UserDevice[]
   hostPlugins                 UserHostPlugin[]
+  hostPluginTaskSnapshots     HostPluginTaskSnapshot[]
 
   @@unique([email])
   @@map("user")
@@ -720,6 +721,7 @@ model Space {
   tasks                       Task[]
   runs                        Run[]
   runTerminalEvents           RunTerminalEvent[]
+  hostPluginTaskSnapshots     HostPluginTaskSnapshot[]
   routines                    Routine[]
   scratchpadItems             ScratchpadItem[]
   botEmailMessages            BotEmailMessage[]
@@ -1036,6 +1038,7 @@ model SpaceVoicePreference {
 
 model Bot {
   meetingSessions MeetingSession[]
+  hostPluginTaskSnapshots HostPluginTaskSnapshot[]
   screenGeneration Int @default(0)
   id                String            @id @default(cuid())
   spaceId           String
@@ -3006,6 +3009,27 @@ model UserHostPlugin {
 
   @@id([userId, pluginId])
   @@map("user_host_plugins")
+}
+
+model HostPluginTaskSnapshot {
+  id         String   @id @default(cuid())
+  pluginId   String
+  spaceId    String
+  space      Space    @relation(fields: [spaceId], references: [id], onDelete: Cascade)
+  userId     String
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  botId      String
+  bot        Bot      @relation(fields: [botId], references: [id], onDelete: Cascade)
+  bindingKey String
+  cards      Json
+  checkedAt  DateTime
+
+  @@unique([pluginId, spaceId, userId, botId])
+  @@index([pluginId, checkedAt])
+  @@index([spaceId])
+  @@index([userId])
+  @@index([botId])
+  @@map("host_plugin_task_snapshots")
 }
 
 model UserActionAutoReviewPreference {

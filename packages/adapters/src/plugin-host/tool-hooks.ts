@@ -34,11 +34,11 @@ type ResultProjection = z.infer<typeof resultProjection>;
 
 function loadPluginToolHooks(ctx: RunContext) {
   const { spaceId, userId } = ctx.run;
-  return ctx.deps.loadHostPlugins
-    ? ctx.deps.loadHostPlugins({ spaceId, userId })
-    : serverPlugins.size
-      ? enabledHostPluginIds(ctx.deps.prisma, userId).then(serverPlugins.enabled)
-      : Promise.resolve([]);
+  if (ctx.deps.loadHostPlugins) return ctx.deps.loadHostPlugins({ spaceId, userId });
+  const registry = serverPlugins();
+  return registry.size
+    ? enabledHostPluginIds(ctx.deps.prisma, userId).then(registry.enabled)
+    : Promise.resolve([]);
 }
 
 export function enabledPluginToolHooks(ctx: RunContext) {

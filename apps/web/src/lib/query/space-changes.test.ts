@@ -39,6 +39,20 @@ it("knows which frames are read changes", () => {
   expect(isReadChangeKind("toString")).toBe(false);
 });
 
+it("refreshes hosted chat cards after a card or account preference signal", async () => {
+  const client = new QueryClient();
+  const cards = key("hostPlugins", "chatCards");
+  const list = key("hostPlugins", "list");
+  client.setQueryData(cards, []);
+  client.setQueryData(list, []);
+  await spaceChanged("pluginCards", client);
+  expect(client.getQueryState(cards)?.isInvalidated).toBe(true);
+  expect(client.getQueryState(list)?.isInvalidated).toBe(false);
+  client.setQueryData(cards, []);
+  await spaceChanged("preferences", client);
+  expect(client.getQueryState(cards)?.isInvalidated).toBe(true);
+});
+
 it("re-reads a completed run when its signal arrives during the first Activity read", async () => {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   const first = deferred<string[]>();

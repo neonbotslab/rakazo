@@ -296,6 +296,7 @@ async function main() {
           ),
       reconcileHomeStorage: homeStorageSweeper(home),
       reconcileDeadJobs: inMemoryJobs ? undefined : createDeadJobPruner(pool),
+      reconcilePluginTaskSnapshots: foundation.hostPluginTaskCards?.reconcile,
     },
     { messagingDelivery, teamChat },
   );

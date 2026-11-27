@@ -41,6 +41,9 @@ import { ExpoPushProvider } from "../notifications/expo-push.js";
 import { PrismaPushTokenStore } from "../notifications/push-token-store.js";
 import { followRunTerminalEvents } from "../plugin-host/run-terminal-events.js";
 import { serverPlugins } from "../plugin-host/server-plugins.js";
+import type { HostPluginTaskCards } from "../plugin-host/task-snapshots.js";
+import { createHostPluginTaskCards } from "../plugin-host/task-snapshots.js";
+import { wardenTasksConfigured } from "../providers/task-feed/warden/warden-task-config.js";
 import { WorkActivities } from "../runs/lifecycle/work-activity.js";
 import { createRunSecretWriter } from "../secrets/run-secret.js";
 import { withSecretWriteAhead } from "../secrets/secret-cleanup.js";
@@ -92,6 +95,7 @@ export type ServerFoundation = {
   secrets: SecretStore;
   analytics: ProductAnalytics | undefined;
   events: ThreadEvents;
+  hostPluginTaskCards?: HostPluginTaskCards;
   /** The queue built from this client; a secret written or dropped before then gets no backup. */
   useJobs: (jobs: JobPublisher) => void;
   stopRunTerminalEvents: () => Promise<void>;
@@ -139,6 +143,11 @@ export async function startServerFoundation(input: {
     analytics,
     runSecretWriter: createRunSecretWriter(secrets),
   });
+  const feed = wardenTasksConfigured()
+    ? (await import("../providers/task-feed/warden/warden-task-feed.js")).createWardenTaskFeed(
+        process.env,
+      )
+    : undefined;
   let terminalEvents: Promise<(() => Promise<void>) | undefined> | undefined;
   return {
     prisma,
@@ -146,9 +155,10 @@ export async function startServerFoundation(input: {
     secrets,
     analytics,
     events,
+    hostPluginTaskCards: feed ? createHostPluginTaskCards({ prisma, events, feed }) : undefined,
     useJobs: (jobs) => {
       secretCleanupJobs = jobs;
-      if (serverPlugins.size > 0)
+      if (serverPlugins().size > 0)
         terminalEvents ??= bestEffort(
           "follow terminal run events",
           followRunTerminalEvents({ prisma, realtime, jobs }),

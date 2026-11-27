@@ -71,6 +71,49 @@ describe("notifications.subscribe space change signals", () => {
     },
   );
 
+  it("forwards cards and preferences through one account subscription", async () => {
+    const controller = new AbortController();
+    const accountScope = accountPreferencesChangesScope(actor.userId);
+    const followSpaceChanges = vi.fn(async function* (scope: string) {
+      if (scope !== accountScope) return;
+      yield "pluginCards" as const;
+      yield "preferences" as const;
+    });
+    const client = createRouterClient(
+      createRouter({ events: { followChatAlerts, followSpaceChanges } } as unknown as RouterDeps),
+      { context: { actor, signal: controller.signal } },
+    );
+    try {
+      const frames = (await client.notifications.subscribe())[Symbol.asyncIterator]();
+      expect((await frames.next()).value).toEqual({ type: "pluginCards" });
+      expect((await frames.next()).value).toEqual({ type: "preferences" });
+      expect(
+        followSpaceChanges.mock.calls.filter(([scope]) => scope === accountScope),
+      ).toHaveLength(1);
+    } finally {
+      controller.abort();
+    }
+  });
+
+  it("discards card changes from the shared Space topic", async () => {
+    const controller = new AbortController();
+    const followSpaceChanges = vi.fn(async function* (scope: string) {
+      if (scope !== actor.spaceId) return;
+      yield "pluginCards" as const;
+      yield "runs" as const;
+    });
+    const client = createRouterClient(
+      createRouter({ events: { followChatAlerts, followSpaceChanges } } as unknown as RouterDeps),
+      { context: { actor, signal: controller.signal } },
+    );
+    try {
+      const frames = (await client.notifications.subscribe())[Symbol.asyncIterator]();
+      expect((await frames.next()).value).toEqual({ type: "runs" });
+    } finally {
+      controller.abort();
+    }
+  });
+
   it("ends the stream half a minute after space change signals fail", async () => {
     vi.useFakeTimers();
     const controller = new AbortController();

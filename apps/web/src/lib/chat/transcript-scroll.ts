@@ -17,7 +17,7 @@ export function transcriptMovedDown(previousScrollTop: number | null, scrollTop:
 }
 
 /**
- * The first message row at or below the scroll position: the anchor a prepend
+ * The first chat row at or below the scroll position: the anchor a prepend
  * must hold steady. Content appended at the bottom moves no row, so anchoring
  * on the row keeps the adjustment free of that growth.
  */
@@ -25,7 +25,9 @@ export function firstVisibleTranscriptRow(
   element: Pick<HTMLElement, "querySelectorAll" | "scrollTop"> | null,
 ): HTMLElement | null {
   if (!element) return null;
-  for (const row of element.querySelectorAll<HTMLElement>("[data-message-id]")) {
+  for (const row of element.querySelectorAll<HTMLElement>(
+    "[data-message-id],[data-host-plugin-task-id]",
+  )) {
     if (row.offsetTop + row.offsetHeight > element.scrollTop) return row;
   }
   return null;

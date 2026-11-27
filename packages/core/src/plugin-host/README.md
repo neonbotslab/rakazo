@@ -15,3 +15,9 @@ Users enable installed plugins from **Settings → Plugins**. The choice is stor
 `onNotification(notice)` is a Web hook. Return `keep`, `suppress`, or `patch` with replacement text or `silent: true`. Rakazo decides eligibility and click targets before calling the hook.
 
 `beforeSendMessage(draft)` runs in Web before a fresh send. Return `continue`, rewrite the text with `rewrite`, leave the draft unsent with `cancel`, or pause with `hold`. **Resume** continues with the next hook. Editing the held draft invalidates the hold.
+
+## Warden Tasks
+
+Set `WARDEN_TASKS_BASE_URL`, `WARDEN_TASKS_TOKEN`, and `WARDEN_TASKS_BINDINGS` on the API and worker. Both processes need network access to Warden. Use a credential that can list the mapped tasks. Bindings are a JSON array mapping each Rakazo `botId` to its exact Warden `requestedBy` identity.
+
+The bot owner enables Warden Tasks in **Settings → Plugins**. Cards appear in that bot's chat and show ended tasks from the past 24 hours. The server reads Warden and signals the owner's browser through Rakazo's live stream. The browser reads the card data from Rakazo, and a task link opens Warden separately.

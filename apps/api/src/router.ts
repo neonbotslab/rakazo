@@ -17,6 +17,7 @@ import type {
   ConnectorRegistry,
   createPageRevisions,
   FaviconResolver,
+  HostPluginTaskCards,
   IntegrationProviderSettings,
   McpConnector,
   McpOAuthBroker,
@@ -130,6 +131,7 @@ export interface RouterDeps {
   remoteConnectors?: RemoteConnectorDependencies;
   pluginRepoFetcher?: PluginRepoFetcher;
   pluginMarketplaceRead?: PluginTextReader;
+  hostPluginTaskCards?: Pick<HostPluginTaskCards, "pluginId" | "read">;
   artifacts: ArtifactStore;
   dataDir: string;
   messagingInstallations?: MessagingInstallations;

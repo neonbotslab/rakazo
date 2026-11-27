@@ -4,6 +4,7 @@ import { useTimeout } from "@rakazo/chat-ui/hooks";
 import type {
   BotAvatarSet,
   ComputerReleaseReason,
+  HostPluginTaskCard,
   LoginFieldInput,
   MessageReaction,
   ThreadMessage,
@@ -41,6 +42,7 @@ import {
 } from "react";
 import { ActiveBotGlyph } from "../../../components/ai/CollaborationMarker";
 import { VoiceChatCard } from "../../../components/call/VoiceChatCard";
+import { HostPluginTaskCardView } from "../../../components/messages/HostPluginTaskCard";
 import {
   isDetachedRange,
   lastSelectedText,
@@ -64,6 +66,7 @@ import type { GalleryImage } from "./image-gallery";
 import { galleryImageKey, ImageGalleryProvider } from "./image-gallery";
 import { MessageView } from "./message-view";
 import { QuoteSelectionButton } from "./quote-selection-button";
+import { joinTranscriptTasks } from "./transcript-task-cards";
 import { useReplyAnnouncement } from "./use-reply-announcement";
 
 /** Bubbles stop at a readable line length instead of stretching with wide windows. */
@@ -76,6 +79,7 @@ export function bubbleFrameWidth(role: ThreadMessage["role"]) {
 /** Rows drawn in the frame a chat opens; the rest mount right after without blocking input. */
 const FIRST_FRAME_ROWS = 20;
 const PAGE_PREVIEW_SCROLL = "[data-page-preview-scroll]";
+const NO_TASK_CARDS: readonly HostPluginTaskCard[] = [];
 
 export const Transcript = memo(function Transcript({
   scrollRef,
@@ -84,6 +88,7 @@ export const Transcript = memo(function Transcript({
   followRequest,
   artifactTarget,
   transcript,
+  taskCards = NO_TASK_CARDS,
   meId,
   showToolActivity,
   olderCursor,
@@ -129,6 +134,7 @@ export const Transcript = memo(function Transcript({
   followRequest: number;
   artifactTarget: ArtifactTarget;
   transcript: FoldedTranscript<ThreadMessage>;
+  taskCards?: readonly HostPluginTaskCard[];
   meId?: string;
   showToolActivity: boolean;
   olderCursor: number | null;
@@ -310,8 +316,17 @@ export const Transcript = memo(function Transcript({
     (item) =>
       item.kind === "voiceChat" || messageHasVisibleBlocks(item.message.blocks, showToolActivity),
   );
-  const shownItems = showTail ? items.slice(-FIRST_FRAME_ROWS) : items;
-  const continuedSenderIds = continuedSenderMessageIds(shownItems, separatorIds, unreadDividerId);
+  const rows = joinTranscriptTasks(
+    items,
+    taskCards,
+    olderCursor == null ? undefined : messages[0]?.createdAt,
+  );
+  const shownItems = showTail ? rows.slice(-FIRST_FRAME_ROWS) : rows;
+  const continuedSenderIds = continuedSenderMessageIds(
+    shownItems.filter((item) => item.kind !== "hostPluginTask"),
+    separatorIds,
+    unreadDividerId,
+  );
   const workingLabel =
     liveActivityLine(messages) ?? (workingRoutine ? t`Running ${workingRoutine}…` : t`Thinking…`);
   const [quoteDraft, setQuoteDraft] = useState<{
@@ -574,7 +589,7 @@ export const Transcript = memo(function Transcript({
     else if (element) {
       setAtEnd(transcriptIsNearEnd(element) && !isHeld(element, heldAt.current));
     }
-  }, [messages, running, showTail, scrollRef, snapToEnd]);
+  }, [messages, taskCards, running, showTail, scrollRef, snapToEnd]);
 
   useLayoutEffect(() => {
     const button = jumpButtonRef.current;
@@ -700,6 +715,17 @@ export const Transcript = memo(function Transcript({
             </Button>
           ) : null}
           {shownItems.map((item) => {
+            if (item.kind === "hostPluginTask") {
+              return (
+                <div
+                  key={`host-plugin:${item.task.id}`}
+                  data-host-plugin-task-id={item.task.id}
+                  className={`relative min-w-0 ${bubbleFrameWidth("bot")}`}
+                >
+                  <HostPluginTaskCardView task={item.task} />
+                </div>
+              );
+            }
             if (item.kind === "voiceChat") {
               return (
                 <div key={item.key}>

@@ -131,6 +131,7 @@ export function createJobReconciler(
     reconcileHomeStorage?: () => Promise<void>;
     reconcileIdleComputers?: () => Promise<void>;
     reconcileDeadJobs?: () => Promise<void>;
+    reconcilePluginTaskSnapshots?: () => Promise<void>;
     /** Gives chat messages whose backup job was lost a new one. */
     reconcileChatDelivery?: () => Promise<void>;
     /** The process's database outage streak; defaults to the shared one. */
@@ -179,6 +180,7 @@ export function createJobReconciler(
     deps.reconcileHomeStorage,
     deps.reconcileIdleComputers,
     deps.reconcileDeadJobs,
+    deps.reconcilePluginTaskSnapshots,
     deps.reconcileChatDelivery,
   ].filter((reconcile) => reconcile !== undefined);
   const housekeepingRunning = new Map<() => Promise<void>, Promise<void>>();

@@ -80,6 +80,12 @@ export const ENCRYPTED_MODELS: Record<string, ModelSpec> = {
     space: { column: "spaceId" },
     ownerRelation: "user",
   },
+  HostPluginTaskSnapshot: {
+    table: "host_plugin_task_snapshots",
+    fields: { cards: { plainKeys: NO_PLAINTEXT_KEYS } },
+    space: { column: "spaceId" },
+    ownerRelation: "bot",
+  },
   MeetingSession: {
     table: "meeting_sessions",
     fields: { meetingUrl: { hidden: true }, transcript: { hidden: true } },

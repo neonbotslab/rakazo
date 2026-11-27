@@ -162,6 +162,7 @@ export type SpaceSource =
   | "bot_email_messages"
   | "meeting_sessions"
   | "native_calendar_requests"
+  | "host_plugin_task_snapshots"
   | "tasks";
 
 export interface SpaceKeyStore {
@@ -194,6 +195,7 @@ export const ROW_OWNER: Record<SpaceSource, string> = {
   bot_email_messages: "botId",
   meeting_sessions: "userId",
   native_calendar_requests: "userId",
+  host_plugin_task_snapshots: "botId",
   tasks: "threadId",
 };
 
@@ -217,6 +219,7 @@ const ROW_CONTEXT: Record<SpaceSource, string> = {
   messages: `SELECT t."spaceId", m."threadId" AS owner FROM messages m JOIN threads t ON t.id = m."threadId" WHERE m.id = $1`,
   memory_revisions: `SELECT d."spaceId", r."documentId" AS owner FROM memory_revisions r JOIN memory_documents d ON d.id = r."documentId" WHERE r.id = $1`,
   native_calendar_requests: `SELECT "spaceId", "userId" AS owner FROM native_calendar_requests WHERE id = $1`,
+  host_plugin_task_snapshots: `SELECT "spaceId", "botId" AS owner FROM host_plugin_task_snapshots WHERE id = $1`,
   meeting_sessions: `SELECT "spaceId", "userId" AS owner FROM meeting_sessions WHERE id = $1`,
   bot_email_messages: `SELECT "spaceId", "botId" AS owner FROM bot_email_messages WHERE id = $1`,
   tasks: `SELECT "spaceId", "threadId" AS owner FROM tasks WHERE id = $1`,

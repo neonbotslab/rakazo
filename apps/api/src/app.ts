@@ -610,7 +610,7 @@ async function buildApp(overrides: CreateAppOverrides): Promise<AppHandles> {
           mediaGeneration,
           billingEnabled: modelCreditsEnabled,
         },
-        {},
+        { reconcilePluginTaskSnapshots: foundation.hostPluginTaskCards?.reconcile },
         { messagingDelivery, teamChat },
       )
     : undefined;
@@ -668,6 +668,7 @@ async function buildApp(overrides: CreateAppOverrides): Promise<AppHandles> {
     });
 
   const router = createRouter({
+    hostPluginTaskCards: foundation.hostPluginTaskCards,
     // Only computers people paired: nothing clears a routine's "Use my computer" when this
     // server's own screen is turned off and on again.
     userDevices: userDevicesOverride ?? userDevices,

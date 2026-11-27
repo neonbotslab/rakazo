@@ -3,9 +3,23 @@ import { ClientError } from "@rakazo/core";
 import type { PluginDefinition, ServerPluginHooks } from "@rakazo/core/plugin-host";
 import { createPluginRegistry } from "@rakazo/core/plugin-host";
 import type { PrismaClient } from "@rakazo/db";
+import {
+  wardenTasksConfigured,
+  wardenTasksManifest,
+} from "../providers/task-feed/warden/warden-task-config.js";
 
 const trustedPlugins: readonly PluginDefinition<ServerPluginHooks>[] = [];
-export const serverPlugins = createPluginRegistry(trustedPlugins);
+type ServerPluginRegistry = ReturnType<typeof createPluginRegistry<ServerPluginHooks>>;
+let installedPlugins: ServerPluginRegistry | undefined;
+
+export function serverPlugins(): ServerPluginRegistry {
+  installedPlugins ??= createPluginRegistry(
+    wardenTasksConfigured()
+      ? [...trustedPlugins, { manifest: wardenTasksManifest, hooks: {} }]
+      : trustedPlugins,
+  );
+  return installedPlugins;
+}
 
 type PluginPreferencesDb = Pick<PrismaClient, "userHostPlugin">;
 
@@ -17,10 +31,7 @@ export async function enabledHostPluginIds(prisma: PluginPreferencesDb, userId: 
   return new Set(rows.map(({ pluginId }) => pluginId));
 }
 
-export function createHostPluginSettings(
-  prisma: PluginPreferencesDb,
-  registry: typeof serverPlugins = serverPlugins,
-) {
+export function createHostPluginSettings(prisma: PluginPreferencesDb, registry = serverPlugins()) {
   return {
     async list(userId: string) {
       if (registry.size === 0) return [];
@@ -34,7 +45,8 @@ export function createHostPluginSettings(
         create: { userId, pluginId: id, enabled },
         update: { enabled },
       });
-      return { id, name: plugin.manifest.name, enabled };
+      const { name, chatCards } = plugin.manifest;
+      return { id, name, enabled, ...(chatCards ? { chatCards } : {}) };
     },
   };
 }

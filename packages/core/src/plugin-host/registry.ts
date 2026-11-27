@@ -6,6 +6,7 @@ export interface PluginManifest {
   readonly name: string;
   readonly version: string;
   readonly apiVersion: 1;
+  readonly chatCards?: true;
 }
 
 export interface PluginDefinition<Hooks extends object = object> {
@@ -47,7 +48,12 @@ export function createPluginRegistry<Hooks extends object>(
       return installed.get(id);
     },
     list(enabled: ReadonlySet<string>): HostPluginPreference[] {
-      return ordered.map(({ manifest: { id, name } }) => ({ id, name, enabled: enabled.has(id) }));
+      return ordered.map(({ manifest: { id, name, chatCards } }) => ({
+        id,
+        name,
+        enabled: enabled.has(id),
+        ...(chatCards && { chatCards }),
+      }));
     },
     enabled(enabled: ReadonlySet<string>): readonly PluginDefinition<Hooks>[] {
       return ordered.filter(({ manifest }) => enabled.has(manifest.id));

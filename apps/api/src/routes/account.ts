@@ -11,7 +11,7 @@ import {
   settleCallRequest,
   validateCreditOfferingChoice,
 } from "@rakazo/adapters";
-import { createHostPluginSettings } from "@rakazo/adapters/plugin-host";
+import { createHostPluginSettings, enabledHostPluginIds } from "@rakazo/adapters/plugin-host";
 import type {
   ActionApprovalRule,
   Actor,
@@ -83,6 +83,7 @@ import {
   startModelConnect,
 } from "../models/model-connect-analytics.js";
 import type { RouterDeps } from "../router.js";
+import { resolveThreadTarget } from "../threads/thread-target.js";
 import type { RouterContext } from "./context.js";
 import { HEARTBEAT, meDto, mergeStreams, withHeartbeats } from "./shared.js";
 
@@ -137,6 +138,15 @@ export function accountRoutes(ctx: RouterContext) {
       list: authed.hostPlugins.list.handler(({ context }) =>
         hostPlugins.list(context.actor.userId),
       ),
+      chatCards: authed.hostPlugins.chatCards.handler(async ({ context, input }) => {
+        const { actor } = context;
+        const target = await resolveThreadTarget(deps.prisma, actor, input);
+        const source = deps.hostPluginTaskCards;
+        if (!source || target.kind !== "bot" || target.bot.userId !== actor.userId) return [];
+        const enabled = await enabledHostPluginIds(deps.prisma, actor.userId);
+        if (!enabled.has(source.pluginId)) return [];
+        return source.read({ spaceId: actor.spaceId, userId: actor.userId, botId: target.botId });
+      }),
       setEnabled: authed.hostPlugins.setEnabled.handler(async ({ context, input }) => {
         const { userId } = context.actor;
         const saved = await hostPlugins.setEnabled(userId, input);
@@ -480,14 +490,17 @@ export function accountRoutes(ctx: RouterContext) {
           // failure costs one reconnect every half minute rather than a tight loop.
           try {
             for await (const spaceChange of followSpaceChanges(scope, signal)) {
+              const forAccount = spaceChange === "preferences" || spaceChange === "pluginCards";
               if (
-                special
-                  ? spaceChange === special
-                  : spaceChange !== "meetingCalendar" &&
-                    spaceChange !== "nativeCalendar" &&
-                    spaceChange !== "pages" &&
-                    spaceChange !== "deploymentModel" &&
-                    spaceChange !== "preferences"
+                special === "preferences"
+                  ? forAccount
+                  : special
+                    ? spaceChange === special
+                    : !forAccount &&
+                      spaceChange !== "meetingCalendar" &&
+                      spaceChange !== "nativeCalendar" &&
+                      spaceChange !== "pages" &&
+                      spaceChange !== "deploymentModel"
               )
                 yield { spaceChange };
             }
