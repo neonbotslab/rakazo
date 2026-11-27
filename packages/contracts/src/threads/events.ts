@@ -1,5 +1,6 @@
 import * as z from "zod";
 import { Id } from "../ids.js";
+import { ReasoningTextSchema } from "./thread-message.js";
 
 export const ProductEventType = z.enum([
   "thread.message.created",
@@ -59,12 +60,22 @@ export const ThreadActivityPayloadSchema = z
   })
   .strict();
 
+export const ThreadReasoningPayloadSchema = z.strictObject({
+  reasoningChanged: z.literal(true),
+  reasoning: ReasoningTextSchema.nullable(),
+});
+
 /** Distinguish this live lifecycle subtype from unrelated thread metadata. */
 export function hasThinkingActivityMarker(payload: Record<string, unknown>): payload is {
   activity: { thinking: unknown };
 } {
   const activity = payload.activity;
   return activity !== null && typeof activity === "object" && "thinking" in activity;
+}
+
+export function threadRunActivitySchema(payload: Record<string, unknown>) {
+  if (hasThinkingActivityMarker(payload)) return ThreadActivityPayloadSchema;
+  if (payload.reasoningChanged === true) return ThreadReasoningPayloadSchema;
 }
 
 export const ProductEventSchema = z
@@ -80,8 +91,9 @@ export const ProductEventSchema = z
     payload: z.record(z.string(), z.unknown()),
   })
   .superRefine((event, ctx) => {
-    if (event.type !== "thread.meta" || !hasThinkingActivityMarker(event.payload)) return;
-    if (!event.runId || !ThreadActivityPayloadSchema.safeParse(event.payload).success) {
+    if (event.type !== "thread.meta") return;
+    const schema = threadRunActivitySchema(event.payload);
+    if (schema && (!event.runId || !schema.safeParse(event.payload).success)) {
       ctx.addIssue({ code: "custom", path: ["payload"], message: "Invalid run activity" });
     }
   });

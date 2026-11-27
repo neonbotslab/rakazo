@@ -528,6 +528,9 @@ export class PiAgentRuntime implements AgentRuntime {
                 target.config.cacheCapabilities?.retentionMode,
               ),
               setThinking,
+              (event) => {
+                if (!signal.aborted) queue.push(event);
+              },
             );
           },
           onContextLimit: (contextWindow) => {

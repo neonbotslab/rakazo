@@ -32,6 +32,7 @@ const EVENT_PAYLOAD_PLAIN_KEYS = new Set([
   "state",
   "updatedAt",
   "streaming",
+  "reasoningChanged",
 ]);
 
 const NO_PLAINTEXT_KEYS = new Set<string>();
@@ -60,7 +61,11 @@ interface ModelSpec {
 export const ENCRYPTED_MODELS: Record<string, ModelSpec> = {
   Message: {
     table: "messages",
-    fields: { blocks: { plainKeys: MESSAGE_BLOCK_PLAIN_KEYS }, toolHistory: { hidden: true } },
+    fields: {
+      blocks: { plainKeys: MESSAGE_BLOCK_PLAIN_KEYS },
+      toolHistory: { hidden: true },
+      reasoning: { hidden: true, plainKeys: NO_PLAINTEXT_KEYS },
+    },
     space: { parent: "threads" },
     ownerRelation: "thread",
     searchTokens: "han-pairs",
@@ -423,8 +428,10 @@ export function withContentEncryption(prisma: PrismaClient, ring: ContentKeyRing
       const indexed = !spec.fields[field]!.hidden;
       if (value === null) next[field] = null;
       else if (plainKeys) {
-        words.push(historySearchText(value as Prisma.JsonValue));
-        strings.push(...stringsIn(value));
+        if (indexed) {
+          words.push(historySearchText(value as Prisma.JsonValue));
+          strings.push(...stringsIn(value));
+        }
         next[field] = sealJson(value, plainKeys, encrypt);
       } else if (typeof value === "string") {
         if (indexed) {

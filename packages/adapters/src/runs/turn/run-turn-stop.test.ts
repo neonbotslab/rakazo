@@ -92,6 +92,55 @@ describe("consumeRunEvents and Stop", () => {
     vi.useRealTimers();
   });
 
+  it("coalesces readable reasoning and redacts a credential split across deltas", async () => {
+    const { ctx: base } = await context({ status: "running" });
+    const ctx = { ...base, scripted: false, secrets: ["fixture-credential"] };
+    const append = vi.mocked(ctx.deps.events.append);
+    const start = Date.now();
+    async function* runtime(): AsyncIterable<AgentRuntimeEvent> {
+      yield { type: "reasoning", phase: "start", at: start };
+      yield {
+        type: "reasoning",
+        phase: "delta",
+        text: "Plan the next step carefully. fixture-cre",
+      };
+      yield { type: "reasoning", phase: "delta", text: "dential. Check the schedule." };
+      expect(append).toHaveBeenCalledTimes(1);
+      vi.setSystemTime(start + 1_000);
+      yield { type: "reasoning", phase: "delta", text: " Then compare the calendars." };
+      yield { type: "reasoning", phase: "end", at: start + 1_500 };
+    }
+    await consumeRunEvents(ctx, runtime());
+
+    const payloads = append.mock.calls.map(([event]) => event.payload);
+    expect(payloads.map((payload) => payload.reasoningChanged)).toEqual([true, true, true]);
+    expect(payloads[1]?.reasoning).toContain("[redacted]");
+    expect(payloads[2]?.reasoning).toBeNull();
+    expect(JSON.stringify(payloads)).not.toContain("fixture-cre");
+    expect(ctx.state.reply.reasoning).toEqual({
+      text: "Plan the next step carefully. [redacted]. Check the schedule. Then compare the calendars.",
+      startedAt: new Date(start).toISOString(),
+      endedAt: new Date(start + 1_500).toISOString(),
+      durationMs: 1_500,
+    });
+  });
+
+  it("caps streamed and completed reasoning on a UTF-8 character boundary", async () => {
+    const { ctx: base } = await context({ status: "running" });
+    const ctx = { ...base, scripted: false };
+    const at = Date.now();
+    async function* runtime(): AsyncIterable<AgentRuntimeEvent> {
+      yield { type: "reasoning", phase: "start", at };
+      yield { type: "reasoning", phase: "delta", text: `a${"🙂".repeat(4_096)}` };
+      yield { type: "reasoning", phase: "end", at: at + 1_000 };
+    }
+    await consumeRunEvents(ctx, runtime());
+
+    const expected = `a${"🙂".repeat(4_095)}`;
+    expect(vi.mocked(ctx.deps.events.append).mock.calls[0]?.[0].payload.reasoning).toBe(expected);
+    expect(ctx.state.reply.reasoning?.text).toBe(expected);
+  });
+
   it("aborts a quiet model call within two seconds of Stop", async () => {
     const row = { status: "running" };
     const { ctx } = await context(row);

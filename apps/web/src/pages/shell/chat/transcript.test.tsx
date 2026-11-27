@@ -134,6 +134,49 @@ function render(props: ComponentProps<typeof Transcript>) {
   act(() => root.render(<Transcript {...props} />));
 }
 
+it("shows readable reasoning in place of the thinking placeholder", () => {
+  render(baseProps([]));
+  expect(container.textContent).toContain("Thinking…");
+
+  render({
+    ...baseProps([]),
+    liveReasoning: { run: { botId: "bot", text: "Compare both schedules." } },
+  });
+  expect(container.textContent).toContain("Compare both schedules.");
+  expect(container.textContent).not.toContain("Thinking…");
+});
+
+it.each([
+  [45_000, "45s"],
+  [125_000, "2m05s"],
+  [3_725_000, "1h02m05s"],
+])("collapses %d ms of reasoning under the reply and expands it on click", (durationMs, label) => {
+  const text = "Compare both schedules.";
+  const reply = textMessage("reply", "bot", "Tuesday is free.");
+  const reasoning = {
+    text,
+    durationMs,
+    startedAt: at(0),
+    endedAt: new Date(Date.parse(at(0)) + durationMs).toISOString(),
+  };
+  render({ ...baseProps([{ ...reply, reasoning }]), running: false });
+
+  const row = container.querySelector('[data-message-id="reply"]')!;
+  const disclosure = [...row.querySelectorAll("button")].find(
+    (button) => button.textContent === `Thought for ${label}`,
+  );
+  expect(disclosure).toBeDefined();
+  expect(disclosure?.getAttribute("aria-expanded")).toBe("false");
+  expect(row.textContent).not.toContain(text);
+  expect(row.textContent?.indexOf("Tuesday is free.")).toBeLessThan(
+    row.textContent!.indexOf(`Thought for ${label}`),
+  );
+
+  act(() => disclosure?.click());
+  expect(disclosure?.getAttribute("aria-expanded")).toBe("true");
+  expect(row.textContent).toContain(text);
+});
+
 it("places hosted tasks in the loaded transcript without remounting a task when history expands", () => {
   const messages = [
     textMessage("first", "user", "Start the report"),

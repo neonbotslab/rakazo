@@ -100,4 +100,33 @@ describe("provider thinking lifecycle boundary", () => {
     }
     expect(change.mock.calls.every(([active]) => active === false)).toBe(true);
   });
+
+  it("does not emit text from a provider-redacted block", async () => {
+    const onReasoning = vi.fn();
+    const partial: AssistantMessage = {
+      ...message,
+      content: [
+        {
+          type: "thinking",
+          thinking: "redacted placeholder",
+          redacted: true,
+          thinkingSignature: "opaque",
+        },
+      ],
+    };
+    for await (const _ of withPiThinkingActivity(
+      events([
+        { ...start, partial },
+        { type: "thinking_delta", contentIndex: 0, delta: "redacted placeholder", partial },
+      ]),
+      () => {},
+      onReasoning,
+    )) {
+      /* drain */
+    }
+    expect(onReasoning.mock.calls.flat()).not.toContainEqual(
+      expect.objectContaining({ phase: "delta" }),
+    );
+    expect(JSON.stringify(onReasoning.mock.calls)).not.toContain("opaque");
+  });
 });

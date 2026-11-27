@@ -1,5 +1,5 @@
 import type { MessageAuthor, ThreadMessage, ThreadMessagePage } from "@rakazo/contracts";
-import { MessageBlock as MessageBlockSchema } from "@rakazo/contracts";
+import { MessageBlock as MessageBlockSchema, ReplyReasoningSchema } from "@rakazo/contracts";
 import {
   BACKGROUND_RUN_TRIGGERS,
   callIdFromClientNonce,
@@ -9,7 +9,7 @@ import {
 } from "@rakazo/core";
 import { messageReplyPreview } from "@rakazo/core/message-quote";
 import type { Prisma, PrismaClient } from "@rakazo/db";
-import { loadMessageAuthors, storedMessageBlocks } from "@rakazo/db";
+import { loadMessageAuthors, readJsonColumn, storedMessageBlocks } from "@rakazo/db";
 
 type MessageDb = PrismaClient | Prisma.TransactionClient;
 
@@ -48,6 +48,7 @@ export async function loadMessagePage(
         orderBy: { seq: "asc" },
         take: pageSize,
         include: { replyTo: { select: replySelection } },
+        omit: { reasoning: false },
       });
       const truncated = rows.length >= pageSize;
       const coveredThroughSeq = truncated ? (rows[rows.length - 1]?.seq ?? maxSeq) : maxSeq;
@@ -81,6 +82,7 @@ export async function loadMessagePage(
       orderBy: { seq: "desc" },
       take: pageSize + 1,
       include: { replyTo: { select: replySelection } },
+      omit: { reasoning: false },
     });
     const hasOlder = rows.length > pageSize;
     const pageRows = rows.slice(0, pageSize).reverse();
@@ -266,6 +268,7 @@ type MessageRow = {
   seq: number;
   role: string;
   blocks: Prisma.JsonValue;
+  reasoning?: Prisma.JsonValue;
   botId: string | null;
   authorUserId?: string | null;
   replyToMessageId: string | null;
@@ -305,12 +308,22 @@ function toThreadMessage(row: MessageRow, authors: Map<string, MessageAuthor>): 
         ? null
         : undefined;
   const author = row.authorUserId ? authors.get(row.authorUserId) : undefined;
+  const reasoning =
+    row.reasoning == null
+      ? null
+      : readJsonColumn(
+          ReplyReasoningSchema.nullable(),
+          row.reasoning,
+          { table: "messages", column: "reasoning", id: row.id },
+          { fallback: null },
+        );
   return {
     id: row.id,
     threadId: row.threadId,
     seq: row.seq,
     role: row.role as ThreadMessage["role"],
     blocks: storedMessageBlocks(row),
+    ...(reasoning && { reasoning }),
     botId: row.botId ?? undefined,
     ...(author ? { author } : {}),
     replyToMessageId: row.replyToMessageId ?? undefined,

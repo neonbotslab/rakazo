@@ -5,7 +5,7 @@ import { Id } from "../ids.js";
 import { RunSchema } from "../runs/runs.js";
 import { GroupMemberSchema } from "../spaces/groups.js";
 import { ToolResultModifiersSchema } from "./message-blocks.js";
-import { ThreadMessageSchema } from "./thread-message.js";
+import { ReasoningTextSchema, ThreadMessageSchema } from "./thread-message.js";
 
 /** A run alert the server also pushes to phones, already filtered by the chat's mute settings. */
 export const ChatAlertSchema = z.object({
@@ -77,6 +77,7 @@ export const ThreadSnapshotSchema = z.object({
   activeRuns: z.array(RunSchema).optional(),
   /** Unmatched tool starts and completions, keyed by run ID. */
   liveToolCalls: z.record(Id, z.array(LiveToolCallSchema)).optional(),
+  liveReasoning: z.record(Id, z.object({ botId: Id, text: ReasoningTextSchema })).optional(),
   computer: ComputerStatusSchema.optional(),
 });
 export type ThreadSnapshot = z.infer<typeof ThreadSnapshotSchema>;

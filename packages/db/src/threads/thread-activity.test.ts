@@ -75,9 +75,21 @@ it("limits transient cleanup to progress and exact owned thinking metadata", () 
   expect(filter).toEqual({
     OR: [
       { type: "thread.progress" },
+      { type: "thread.meta", payload: { path: ["reasoningChanged"], equals: true } },
       { type: "thread.meta", payload: { equals: { activity: { thinking: true } } } },
       { type: "thread.meta", payload: { equals: { activity: { thinking: false } } } },
     ],
+  });
+});
+
+it("allows readable reasoning only from the attempt that holds the run lease", async () => {
+  const current = fixture();
+  const stale = fixture("running", "worker-new", 3);
+  const update = { ...input, payload: { reasoningChanged: true, reasoning: "Read the calendar." } };
+  await expect(stale.append(update)).rejects.toThrow(RunHistoryWriteError);
+  await current.append(update);
+  expect(current.tx.event.create).toHaveBeenCalledWith({
+    data: expect.objectContaining({ payload: update.payload }),
   });
 });
 it("retains normal metadata semantics without an activity fence", async () => {

@@ -1263,6 +1263,7 @@ model Message {
   /// A bot reply's tool calls as sent and returned (JSON, see ToolHistorySchema), encrypted like
   /// the blocks. Only the bot's runs read it: message reads leave it out unless they select it.
   toolHistory      String?
+  reasoning        Json?
   sourceRuns            Run[]             @relation("RunSourceMessage")
   externalTranscriptFor  ExternalMessage?
   steeringMessages SteeringMessage[]

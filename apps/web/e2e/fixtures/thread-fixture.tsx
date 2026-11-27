@@ -48,6 +48,7 @@ export function reduceThreadEvents(events: Partial<ProductEvent>[]): ThreadSnaps
 export function FixtureTranscript({
   messages,
   running,
+  liveReasoning,
   showToolActivity,
   header,
   answerableAskIds = NO_IDS,
@@ -55,6 +56,7 @@ export function FixtureTranscript({
 }: {
   messages: readonly ThreadMessage[];
   running: boolean;
+  liveReasoning?: ThreadSnapshot["liveReasoning"];
   showToolActivity: boolean;
   header?: ReactNode;
   /** Messages whose ask cards take answers; the rest render as no longer active. */
@@ -87,6 +89,7 @@ export function FixtureTranscript({
         answerableAskIds={answerableAskIds}
         dismissableAskIds={answerableAskIds}
         running={running}
+        liveReasoning={liveReasoning}
         workingBots={running ? [bots[0]!] : []}
         onLoadOlder={noop}
         onOpenBot={noop}

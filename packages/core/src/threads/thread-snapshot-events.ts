@@ -6,8 +6,9 @@ import type {
   ThreadMessage,
   ThreadSnapshot,
 } from "@rakazo/contracts";
-import { RUN_TRIGGERS } from "@rakazo/contracts";
+import { ReplyReasoningSchema, RUN_TRIGGERS } from "@rakazo/contracts";
 import {
+  applyLiveReasoning,
   isRunTerminalEvent,
   progressMessageId,
   reduceLiveMessageBlocks,
@@ -62,6 +63,7 @@ export type LiveThreadSnapshot = {
   run: LiveThreadRun | null;
   activeRuns?: LiveThreadRun[];
   liveToolCalls?: ThreadSnapshot["liveToolCalls"];
+  liveReasoning?: ThreadSnapshot["liveReasoning"];
   members?: { botId: string; status?: string }[];
 };
 
@@ -73,7 +75,10 @@ export function activeThreadRuns<R extends LiveThreadRun>(
   return snapshot?.activeRuns ?? (snapshot?.run ? [snapshot.run] : []);
 }
 
-export function isThreadSnapshotEvent(event: { type: string }): boolean {
+export function isThreadSnapshotEvent(event: {
+  type: string;
+  payload?: Record<string, unknown>;
+}): boolean {
   return (
     event.type === "thread.cleared" ||
     event.type === "thread.progress" ||
@@ -84,6 +89,8 @@ export function isThreadSnapshotEvent(event: { type: string }): boolean {
     event.type === "thread.message.created" ||
     event.type === "thread.message.updated" ||
     event.type === "run.started" ||
+    event.type === "run.checkpointed" ||
+    (event.type === "thread.meta" && event.payload?.reasoningChanged === true) ||
     event.type === "run.waiting_input" ||
     event.type === "computer.takeover.requested" ||
     event.type === "computer.takeover.released" ||
@@ -110,6 +117,13 @@ function reduce(prev: LiveThreadSnapshot, event: ThreadSnapshotEvent): LiveThrea
   // The replay cursor follows every applied event, including ones that change nothing visible.
   const cursor = event.seq ?? prev.cursor;
   const advanced = () => (cursor === prev.cursor ? prev : { ...prev, cursor });
+  const liveReasoning = applyLiveReasoning(prev.liveReasoning, event);
+  if (liveReasoning !== prev.liveReasoning) prev = { ...prev, liveReasoning };
+  if (
+    event.type === "run.checkpointed" ||
+    (event.type === "thread.meta" && payload.reasoningChanged === true)
+  )
+    return advanced();
   if (
     prev.run?.retryable &&
     ((event.type === "thread.message.created" && payload.role === "user") ||
@@ -382,6 +396,7 @@ function reduce(prev: LiveThreadSnapshot, event: ThreadSnapshotEvent): LiveThrea
     const blocks = (payload.blocks as ThreadMessage["blocks"] | undefined) ?? [];
     const id = String(payload.messageId ?? event.id ?? `msg:${cursor ?? 0}`);
     const known = prev.messages.find((message) => message.id === id);
+    const reasoning = ReplyReasoningSchema.safeParse(payload.reasoning).data ?? known?.reasoning;
     // The message's own seq, which a pending send matches to recognize its echo.
     const seq = typeof payload.seq === "number" ? payload.seq : known?.seq;
     const next: LiveThreadMessage = {
@@ -391,6 +406,7 @@ function reduce(prev: LiveThreadSnapshot, event: ThreadSnapshotEvent): LiveThrea
       ...(seq === undefined ? {} : { seq }),
       role: (payload.role as ThreadMessage["role"] | undefined) ?? "bot",
       blocks,
+      ...(reasoning && { reasoning }),
       botId: event.botId ?? (typeof payload.botId === "string" ? payload.botId : undefined),
       runId: event.runId,
       // An update can leave the call id out — the `end_call` marker does — so keep the one

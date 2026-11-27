@@ -93,6 +93,18 @@ const TABLES: TableSpec[] = [
       Prisma.sql`UPDATE messages SET blocks = ${JSON.stringify(row.blocks)}::jsonb, "searchTokens" = NULL WHERE id = ${id}`,
   },
   {
+    model: "Message",
+    delegate: "message",
+    columns: ["reasoning"],
+    json: true,
+    scan: (cursor, limit) => Prisma.sql`
+      SELECT m.id, jsonb_build_array(m.reasoning) AS values, t."spaceId", m."threadId" AS owner
+      FROM messages m JOIN threads t ON t.id = m."threadId"
+      WHERE m.id > ${cursor} AND m.reasoning IS NOT NULL ORDER BY m.id LIMIT ${limit}`,
+    writePlaintext: (id, row) =>
+      Prisma.sql`UPDATE messages SET reasoning = ${JSON.stringify(row.reasoning)}::jsonb WHERE id = ${id}`,
+  },
+  {
     // A reply's kept tool calls: scalar ciphertext beside the blocks, never search-indexed.
     model: "Message",
     delegate: "message",

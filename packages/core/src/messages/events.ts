@@ -3,9 +3,11 @@ import type {
   LiveToolCall,
   MessageBlock,
   ThreadMessage,
+  ThreadSnapshot,
   ToolHistory,
   ToolStepCall,
 } from "@rakazo/contracts";
+import { ReplyReasoningSchema, ThreadReasoningPayloadSchema } from "@rakazo/contracts";
 import { preserveIdentitySource } from "../bots/identity-source.js";
 import { cloudAgentBlockFromPayload } from "../integrations/cloud-agent.js";
 import { sliceWellFormed } from "../primitives/utf8.js";
@@ -53,6 +55,7 @@ export function projectThreadMessages(
   const liveById = new Map<string, LiveProjection>();
   const liveSubagents = new Map<string, ThreadMessage>();
   const durableSubagents = new Set<string>();
+  let liveReasoning: ThreadSnapshot["liveReasoning"];
   const liveProjection = (event: (typeof events)[number], createdAt: string): LiveProjection => {
     const id = progressMessageId(event);
     const existing = liveById.get(id);
@@ -84,12 +87,14 @@ export function projectThreadMessages(
       }
     }
     const payload = asRecord(event.payload);
+    liveReasoning = applyLiveReasoning(liveReasoning, { ...event, payload });
     const createdAt =
       typeof event.createdAt === "string" ? event.createdAt : event.createdAt.toISOString();
     if (event.type === "thread.message.created") {
       clearLive(event);
       const role = (payload.role as ThreadMessage["role"]) ?? "bot";
       const blocks = (payload.blocks as MessageBlock[]) ?? [];
+      const reasoning = ReplyReasoningSchema.safeParse(payload.reasoning).data;
       for (const block of blocks) {
         if (block.kind === "subagent") {
           durableSubagents.add(block.agentId);
@@ -102,6 +107,7 @@ export function projectThreadMessages(
         seq: event.seq,
         role,
         blocks,
+        ...(role === "bot" && reasoning && { reasoning }),
         botId: event.botId ?? undefined,
         ...payloadAuthor(payload),
         runId: event.runId ?? undefined,
@@ -200,7 +206,36 @@ export function projectThreadMessages(
       meta.runId && calls ? [[meta.runId, calls] as const] : [],
     ),
   );
-  return { messages, liveToolCalls };
+  return { messages, liveToolCalls, liveReasoning };
+}
+
+export function applyLiveReasoning(
+  current: ThreadSnapshot["liveReasoning"],
+  event: {
+    type: string;
+    runId?: string | null;
+    botId?: string | null;
+    payload?: Record<string, unknown>;
+  },
+): ThreadSnapshot["liveReasoning"] {
+  if (event.type === "thread.cleared") return undefined;
+  const { runId, botId } = event;
+  if (!runId) return current;
+  if (event.type === "thread.meta" && event.payload?.reasoningChanged === true) {
+    const update = ThreadReasoningPayloadSchema.safeParse(event.payload);
+    if (!update.success) return current;
+    if (update.data.reasoning && botId)
+      return { ...current, [runId]: { botId, text: update.data.reasoning } };
+  } else if (
+    !stopsRunHelpers(event) &&
+    event.type !== "run.started" &&
+    event.type !== "run.checkpointed"
+  ) {
+    return current;
+  }
+  if (!current || !Object.hasOwn(current, runId)) return current;
+  const { [runId]: _ended, ...remaining } = current;
+  return Object.keys(remaining).length ? remaining : undefined;
 }
 
 /** A pause ends the current helper execution, even when the run later resumes. */

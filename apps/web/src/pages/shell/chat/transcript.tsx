@@ -8,6 +8,7 @@ import type {
   LoginFieldInput,
   MessageReaction,
   ThreadMessage,
+  ThreadSnapshot,
 } from "@rakazo/contracts";
 import type { ChildBotBlock, FoldedTranscript } from "@rakazo/core";
 import {
@@ -43,6 +44,7 @@ import {
 import { ActiveBotGlyph } from "../../../components/ai/CollaborationMarker";
 import { VoiceChatCard } from "../../../components/call/VoiceChatCard";
 import { HostPluginTaskCardView } from "../../../components/messages/HostPluginTaskCard";
+import { ReasoningDisclosure } from "../../../components/messages/ReasoningDisclosure";
 import {
   isDetachedRange,
   lastSelectedText,
@@ -89,6 +91,7 @@ export const Transcript = memo(function Transcript({
   artifactTarget,
   transcript,
   taskCards = NO_TASK_CARDS,
+  liveReasoning,
   meId,
   showToolActivity,
   olderCursor,
@@ -135,6 +138,7 @@ export const Transcript = memo(function Transcript({
   artifactTarget: ArtifactTarget;
   transcript: FoldedTranscript<ThreadMessage>;
   taskCards?: readonly HostPluginTaskCard[];
+  liveReasoning?: ThreadSnapshot["liveReasoning"];
   meId?: string;
   showToolActivity: boolean;
   olderCursor: number | null;
@@ -329,6 +333,7 @@ export const Transcript = memo(function Transcript({
   );
   const workingLabel =
     liveActivityLine(messages) ?? (workingRoutine ? t`Running ${workingRoutine}…` : t`Thinking…`);
+  const reasoningRows = Object.entries(liveReasoning ?? {});
   const [quoteDraft, setQuoteDraft] = useState<{
     message: ThreadMessage;
     text: string;
@@ -589,7 +594,7 @@ export const Transcript = memo(function Transcript({
     else if (element) {
       setAtEnd(transcriptIsNearEnd(element) && !isHeld(element, heldAt.current));
     }
-  }, [messages, taskCards, running, showTail, scrollRef, snapToEnd]);
+  }, [messages, taskCards, liveReasoning, running, showTail, scrollRef, snapToEnd]);
 
   useLayoutEffect(() => {
     const button = jumpButtonRef.current;
@@ -845,6 +850,9 @@ export const Transcript = memo(function Transcript({
                         onMarkUnread={onMarkUnread}
                         onReact={onReact}
                       />
+                      {message.reasoning ? (
+                        <ReasoningDisclosure reasoning={message.reasoning} />
+                      ) : null}
                     </div>
                   </div>
                   {!peerReceipt && messageReactions ? (
@@ -870,10 +878,19 @@ export const Transcript = memo(function Transcript({
               </Fragment>
             );
           })}
-          {running &&
-          !messages.some(
-            (message) => message.id.startsWith("progress:") && liveMessageComposing(message.blocks),
-          ) ? (
+          {running && reasoningRows.length > 0 ? (
+            reasoningRows.map(([id, { botId, text }]) => (
+              <ActiveBotGlyph
+                key={id}
+                bots={workingBots.filter((bot) => bot.botId === botId)}
+                detail={text}
+              />
+            ))
+          ) : running &&
+            !messages.some(
+              (message) =>
+                message.id.startsWith("progress:") && liveMessageComposing(message.blocks),
+            ) ? (
             <ActiveBotGlyph bots={workingBots} label={workingLabel} />
           ) : null}
         </div>

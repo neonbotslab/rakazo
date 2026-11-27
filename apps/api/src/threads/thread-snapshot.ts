@@ -7,12 +7,32 @@ import {
   runFailureError,
 } from "@rakazo/core";
 import type { Prisma, PrismaClient } from "@rakazo/db";
-import { botRunStatuses, spaceIsShared } from "@rakazo/db";
+import { botRunStatuses, spaceIsShared, THREAD_REASONING_EVENTS } from "@rakazo/db";
 import { resolveComputerWork, toComputerStatus } from "../computers/computer-status.js";
 import { THREAD_MESSAGE_PAGE_SIZE } from "../routes/shared.js";
 import { loadMessagePage } from "./thread-message-pages.js";
 import { findRetryableReplySource } from "./thread-retry.js";
 import type { ThreadTarget } from "./thread-target.js";
+
+const liveThreadEvents = {
+  OR: [
+    {
+      type: {
+        in: [
+          "thread.progress",
+          "thread.subagent",
+          "run.started",
+          "run.checkpointed",
+          "run.waiting_input",
+          "computer.takeover.requested",
+          "agent.tool.called",
+          "agent.tool.completed",
+        ],
+      },
+    },
+    THREAD_REASONING_EVENTS,
+  ],
+};
 
 export async function threadSnapshot(
   deps: { prisma: PrismaClient },
@@ -107,16 +127,7 @@ export async function threadSnapshot(
                 where: {
                   threadId: target.threadId,
                   runId: { in: liveRuns.map((run) => run.id) },
-                  type: {
-                    in: [
-                      "thread.progress",
-                      "thread.subagent",
-                      "run.waiting_input",
-                      "computer.takeover.requested",
-                      "agent.tool.called",
-                      "agent.tool.completed",
-                    ],
-                  },
+                  ...liveThreadEvents,
                 },
                 orderBy: { seq: "asc" },
               })
@@ -200,16 +211,7 @@ export async function threadSnapshot(
               where: {
                 threadId: target.threadId,
                 runId: { in: activeRuns.map((run) => run.id) },
-                type: {
-                  in: [
-                    "thread.progress",
-                    "thread.subagent",
-                    "run.waiting_input",
-                    "computer.takeover.requested",
-                    "agent.tool.called",
-                    "agent.tool.completed",
-                  ],
-                },
+                ...liveThreadEvents,
               },
               orderBy: { seq: "asc" },
             })
@@ -294,6 +296,12 @@ function messagesWithLiveEvents(
   runs: NonNullable<Parameters<typeof projectThreadMessages>[1]>,
 ) {
   const projection = projectThreadMessages(liveEvents, runs);
+  const liveReasoning = Object.fromEntries(
+    runs.flatMap((run) => {
+      const reasoning = projection.liveReasoning?.[run.id];
+      return run.status === "running" && reasoning ? [[run.id, reasoning] as const] : [];
+    }),
+  );
   const live = projection.messages.filter((message) => {
     if (message.blocks.some((block) => block.kind === "progress" || block.kind === "steps")) {
       return true;
@@ -307,6 +315,7 @@ function messagesWithLiveEvents(
   });
   return {
     messages: [...persisted, ...live],
+    ...(Object.keys(liveReasoning).length > 0 && { liveReasoning }),
     ...(Object.keys(projection.liveToolCalls).length > 0
       ? { liveToolCalls: projection.liveToolCalls }
       : {}),

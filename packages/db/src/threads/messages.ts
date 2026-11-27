@@ -1,4 +1,4 @@
-import type { MessageAuthor, MessageBlock, ToolHistory } from "@rakazo/contracts";
+import type { MessageAuthor, MessageBlock, ReplyReasoning, ToolHistory } from "@rakazo/contracts";
 import { splitToolHistory } from "@rakazo/core";
 import type { PrismaClient } from "../database/client.js";
 import { Prisma } from "../database/client.js";
@@ -189,6 +189,7 @@ export interface CreateThreadMessageInput {
   threadId: string;
   role: "user" | "bot" | "system";
   blocks: MessageBlock[];
+  reasoning?: ReplyReasoning;
   /** A bot reply's tool calls as sent and returned, for its later runs only. */
   toolHistory?: ToolHistory;
   botId?: string;
@@ -247,6 +248,7 @@ export async function createThreadMessageInTransaction(
       seq: thread.nextMessageSeq - 1,
       role: input.role,
       blocks: split.blocks as Prisma.InputJsonValue,
+      reasoning: input.reasoning,
       ...(toolHistory ? { toolHistory: JSON.stringify(toolHistory) } : {}),
       botId: input.botId,
       authorUserId: input.authorUserId,

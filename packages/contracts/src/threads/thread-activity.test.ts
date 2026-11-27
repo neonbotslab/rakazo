@@ -42,3 +42,15 @@ describe("coarse public thinking contract", () => {
     }
   });
 });
+
+it("bounds a reasoning update in UTF-8 and requires a run", () => {
+  const payload = { reasoningChanged: true, reasoning: "🙂".repeat(4_096) };
+  expect(ProductEventSchema.safeParse({ ...event, payload }).success).toBe(true);
+  expect(ProductEventSchema.safeParse({ ...event, runId: undefined, payload }).success).toBe(false);
+  expect(
+    ProductEventSchema.safeParse({
+      ...event,
+      payload: { ...payload, reasoning: `${payload.reasoning}a` },
+    }).success,
+  ).toBe(false);
+});

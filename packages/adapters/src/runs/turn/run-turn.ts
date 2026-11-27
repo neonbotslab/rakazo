@@ -31,6 +31,7 @@ import {
   STEERING_RESETS_MAX_PER_RUN,
   USER_PROGRESS_MESSAGE_MAX_LENGTH,
 } from "../lifecycle/user-progress.js";
+import { createRunReasoning } from "./run-reasoning.js";
 import { pauseForAnswer, pauseForTakeover } from "./run-turn-pause.js";
 import { onToolCalled } from "./run-turn-tools.js";
 import { takeoverCheckpointOf } from "./takeover-resume.js";
@@ -51,6 +52,7 @@ export async function consumeRunEvents(
 ): Promise<boolean> {
   const { deps, run, runId, bot } = ctx;
   const { reply } = ctx.state;
+  const reasoning = createRunReasoning(ctx);
   let thinking = false;
   const publishThinking = async (active: boolean) => {
     if (thinking === active) return;
@@ -98,6 +100,10 @@ export async function consumeRunEvents(
       }
       if (event.type === "thinking") {
         await publishThinking(event.active);
+        continue;
+      }
+      if (event.type === "reasoning") {
+        await reasoning.consume(event);
         continue;
       }
       if (
@@ -168,6 +174,7 @@ export async function consumeRunEvents(
     clearInterval(watch);
     // Run completion clears thinking too; never let this replace the turn's own outcome.
     await publishThinking(false).catch(() => {});
+    await bestEffort("clear live reasoning", reasoning.discard());
   }
 }
 

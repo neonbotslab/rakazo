@@ -20,6 +20,56 @@ import {
 } from "./thread-snapshot-events.js";
 
 describe("thread event reduction", () => {
+  it("shows the latest reasoning after reconnect and replaces it with the saved reply disclosure", () => {
+    const initial = { ...snapshot([]), cursor: 0 };
+    const active = {
+      id: "event-1",
+      threadId: initial.threadId,
+      botId: "bot-1",
+      runId: "run-1",
+      seq: 1,
+      createdAt: "2026-11-26T00:00:00.000Z",
+      type: "thread.meta",
+      payload: { reasoningChanged: true, reasoning: "Check the first option." },
+    };
+    const next = {
+      ...active,
+      seq: 2,
+      payload: { ...active.payload, reasoning: "Check both options." },
+    };
+    const live = reduceThreadSnapshot(reduceThreadSnapshot(initial, active), next);
+    expect(live?.liveReasoning).toEqual({
+      "run-1": { botId: "bot-1", text: "Check both options." },
+    });
+    expect(projectThreadMessages([active, next]).liveReasoning).toEqual(live?.liveReasoning);
+
+    const reasoning = {
+      text: "Check both options.",
+      startedAt: active.createdAt,
+      endedAt: "2026-11-26T00:02:05.000Z",
+      durationMs: 125_000,
+    };
+    const reply = reduceThreadSnapshot(live, {
+      ...active,
+      seq: 3,
+      type: "thread.message.created",
+      payload: {
+        messageId: "reply",
+        role: "bot",
+        blocks: [{ kind: "text", text: "The second one fits." }],
+        reasoning,
+      },
+    });
+    const done = reduceThreadSnapshot(reply, {
+      ...active,
+      seq: 4,
+      type: "run.completed",
+      payload: {},
+    });
+    expect(done?.liveReasoning).toBeUndefined();
+    expect(done?.messages).toMatchObject([{ id: "reply", reasoning }]);
+  });
+
   it("keeps a helper approval answerable and clears its wait when answered", () => {
     const initial = snapshot([]);
     const created = reduceThreadSnapshot(initial, {

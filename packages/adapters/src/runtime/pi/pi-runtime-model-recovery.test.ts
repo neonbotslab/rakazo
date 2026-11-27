@@ -920,11 +920,11 @@ describe("a reply cut off at the output limit", () => {
 });
 
 describe("coarse thinking lifecycle from real Pi stream events", () => {
-  it("emits explicit start/end without leaking thinking text into runtime events", async () => {
+  it("emits readable reasoning separately from lifecycle markers and reply text", async () => {
     providerState.stream.mockImplementationOnce(() =>
       stream(
         message(reasoner, [{ type: "text", text: "Public answer." }], "stop"),
-        "private fixture reasoning",
+        "Readable fixture reasoning.",
         "Public answer.",
       ),
     );
@@ -933,7 +933,12 @@ describe("coarse thinking lifecycle from real Pi stream events", () => {
       { type: "thinking", active: true },
       { type: "thinking", active: false },
     ]);
-    expect(JSON.stringify(events)).not.toContain("private fixture reasoning");
+    expect(events.filter((event) => event.type === "reasoning")).toEqual([
+      { type: "reasoning", phase: "start", at: expect.any(Number) },
+      { type: "reasoning", phase: "delta", text: "Readable fixture reasoning." },
+      { type: "reasoning", phase: "end", at: expect.any(Number) },
+    ]);
+    expect(texts(events).join("")).toBe("Public answer.");
     expect(events.findIndex((event) => event.type === "text")).toBeGreaterThan(
       events.findIndex((event) => event.type === "thinking" && !event.active),
     );

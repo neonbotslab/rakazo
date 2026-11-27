@@ -42,6 +42,7 @@ import {
   stripNoResponseReply,
   stripStrayNoResponse,
 } from "../assembly/silent-reply.js";
+import { completedRunReasoning } from "../turn/run-reasoning.js";
 import { saveLatestStepScreenshot } from "../turn/tool-step-calls.js";
 import { enqueueSteeringContinuation, renewRunLease } from "./run-lifecycle.js";
 import {
@@ -149,6 +150,7 @@ export async function completeRun(ctx: RunContext) {
     leaseFence: ctx.fence,
     outcome: "completed",
     blocks,
+    reasoning: completedRunReasoning(ctx),
     markUnread: !groupSilentEnd && marksUnread,
   });
   if (!completed) return;

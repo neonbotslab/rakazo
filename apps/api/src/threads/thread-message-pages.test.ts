@@ -10,6 +10,34 @@ import {
 } from "./thread-message-pages.js";
 
 describe("thread message pages", () => {
+  it("returns saved reasoning on a bot reply when loading chat history", async () => {
+    const reasoning = {
+      text: "Compare the days.",
+      startedAt: "2026-11-26T00:00:00.000Z",
+      endedAt: "2026-11-26T00:00:45.000Z",
+      durationMs: 45_000,
+    };
+    const prisma = {
+      message: {
+        findMany: vi.fn(async () => [
+          {
+            id: "reply",
+            threadId: "thread-1",
+            seq: 1,
+            role: "bot",
+            botId: "bot-1",
+            blocks: [{ kind: "text", text: "Friday is free." }],
+            reasoning,
+            createdAt: new Date(),
+          },
+        ]),
+      },
+    } as unknown as PrismaClient;
+
+    const page = await loadMessagePage(prisma, "thread-1", undefined, 10);
+    expect(page.messages).toMatchObject([{ id: "reply", reasoning }]);
+  });
+
   it("names each message's author with one lookup and omits deleted accounts", async () => {
     const row = (id: string, seq: number, authorUserId: string | null, replyTo?: unknown) => ({
       id,
@@ -765,6 +793,7 @@ describe("thread message pages", () => {
         },
       },
       where: { threadId: "thread-1", seq: { lt: 6 } },
+      omit: { reasoning: false },
       orderBy: { seq: "desc" },
       take: 3,
     });
@@ -829,6 +858,7 @@ describe("thread message pages", () => {
         },
       },
       where: { threadId: "thread-1", seq: { gte: Math.max(0, target - 2), lte: target + 2 } },
+      omit: { reasoning: false },
       orderBy: { seq: "asc" },
       take: 4,
     });

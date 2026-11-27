@@ -792,16 +792,21 @@ describe("threadSnapshot", () => {
       expect(findManyEvents).toHaveBeenCalledWith(
         expect.objectContaining({
           where: expect.objectContaining({
-            type: {
-              in: [
-                "thread.progress",
-                "thread.subagent",
-                "run.waiting_input",
-                "computer.takeover.requested",
-                "agent.tool.called",
-                "agent.tool.completed",
-              ],
-            },
+            OR: expect.arrayContaining([
+              {
+                type: {
+                  in: expect.arrayContaining([
+                    "thread.progress",
+                    "thread.subagent",
+                    "run.waiting_input",
+                    "computer.takeover.requested",
+                    "agent.tool.called",
+                    "agent.tool.completed",
+                  ]),
+                },
+              },
+              { type: "thread.meta", payload: { path: ["reasoningChanged"], equals: true } },
+            ]),
           }),
         }),
       );
@@ -4951,6 +4956,7 @@ describe("stopThreadRuns", () => {
       where: {
         OR: [
           { type: "thread.progress" },
+          { type: "thread.meta", payload: { path: ["reasoningChanged"], equals: true } },
           { type: "thread.meta", payload: { equals: { activity: { thinking: true } } } },
           { type: "thread.meta", payload: { equals: { activity: { thinking: false } } } },
         ],
@@ -5111,9 +5117,7 @@ describe("helper snapshot settlement", () => {
         message: { findMany: vi.fn().mockResolvedValue([]) },
         event: {
           findFirst: vi.fn().mockResolvedValue({ seq: 2 }),
-          findMany: vi.fn(async (input: { where: { type: { in: string[] } } }) =>
-            history.filter((event) => input.where.type.in.includes(event.type)),
-          ),
+          findMany: vi.fn().mockResolvedValue(history),
         },
         run: { findFirst: botRunFindFirst(runs), findMany: groupRunFindMany({ active: runs }) },
       };

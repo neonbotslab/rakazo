@@ -42,7 +42,27 @@ export function CollaborationMarker({
 }
 
 /** The working bot with what it is doing right now, such as its current tool call. */
-export function ActiveBotGlyph({ bots, label }: { bots: GroupAvatarMember[]; label: string }) {
+export function ActiveBotGlyph({
+  bots,
+  label,
+  detail,
+}: { bots: GroupAvatarMember[] } & (
+  | { label: string; detail?: never }
+  | { detail: string; label?: never }
+)) {
+  if (detail !== undefined) {
+    return (
+      <div className="flex min-w-0 items-start gap-2.5 px-1 py-1">
+        <GroupAvatar members={bots} size={28} />
+        <p
+          dir="auto"
+          className="min-w-0 max-w-prose wrap-anywhere whitespace-pre-wrap pt-0.5 text-body-lg text-muted-foreground"
+        >
+          {detail}
+        </p>
+      </div>
+    );
+  }
   return (
     <div role="status" className="flex min-h-10 min-w-0 items-center gap-2.5 px-1">
       <GroupAvatar members={bots} size={28} />

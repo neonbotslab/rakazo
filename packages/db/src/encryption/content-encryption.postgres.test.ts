@@ -76,6 +76,31 @@ describePostgres("content encryption (PostgreSQL)", () => {
     (await raw.query(`SELECT blocks::text AS blocks FROM messages WHERE id = $1`, [id])).rows[0]
       .blocks as string;
 
+  it("seals reply reasoning and only opens it for reads that ask for it", () =>
+    runAsSystem("test fixture", async () => {
+      const reasoning = {
+        text: "Consider whether Friday is available.",
+        startedAt: "2026-11-26T00:00:00.000Z",
+        endedAt: "2026-11-26T00:00:45.000Z",
+        durationMs: 45_000,
+      };
+      const message = await createThreadMessage(prisma, {
+        threadId,
+        role: "bot",
+        blocks: [{ kind: "text", text: "Friday is available." }],
+        reasoning,
+      });
+      const { rows } = await raw.query<{ reasoning: string }>(
+        "SELECT reasoning::text FROM messages WHERE id = $1",
+        [message.id],
+      );
+      expect(rows[0]?.reasoning).toContain("rkz1:");
+      expect(rows[0]?.reasoning).not.toContain(reasoning.text);
+      await expect(
+        prisma.message.findUniqueOrThrow({ where: { id: message.id }, omit: { reasoning: false } }),
+      ).resolves.toMatchObject({ reasoning });
+    }));
+
   beforeAll(() =>
     runAsSystem("test fixture", async () => {
       ({ prisma, pool: raw } = client());

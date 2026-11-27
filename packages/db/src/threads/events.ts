@@ -1,10 +1,15 @@
 import type { ProductAnalytics, RealtimeFanout } from "@rakazo/adapter-kit";
-import type { ChatAlert, MessageBlock, ProductEvent, SpaceChangeKind } from "@rakazo/contracts";
+import type {
+  ChatAlert,
+  MessageBlock,
+  ProductEvent,
+  ReplyReasoning,
+  SpaceChangeKind,
+} from "@rakazo/contracts";
 import {
   AnalyticsTrigger,
-  hasThinkingActivityMarker,
   STEP_SCREENSHOT_MIME_TYPES,
-  ThreadActivityPayloadSchema,
+  threadRunActivitySchema,
 } from "@rakazo/contracts";
 import {
   BACKGROUND_HELPER_TRIGGER,
@@ -106,11 +111,17 @@ export interface AppendEventInput {
   lease?: RunLease;
 }
 
-/** Exact transient lifecycle payloads only: unrelated thread metadata must survive. */
+export const THREAD_REASONING_EVENTS = {
+  type: "thread.meta",
+  payload: { path: ["reasoningChanged"], equals: true },
+} satisfies Prisma.EventWhereInput;
+
+/** Unrelated thread metadata must survive transient cleanup. */
 export function transientRunEventsWhere(): Prisma.EventWhereInput {
   return {
     OR: [
       { type: "thread.progress" },
+      THREAD_REASONING_EVENTS,
       { type: "thread.meta", payload: { equals: { activity: { thinking: true } } } },
       { type: "thread.meta", payload: { equals: { activity: { thinking: false } } } },
     ],
@@ -188,6 +199,7 @@ export type FinalizeRunInput = FinalizeRunBase &
         outcome: "completed";
         /** Steps may carry their tool and kept calls; they are stored apart from the blocks. */
         blocks: MessageBlock[];
+        reasoning?: ReplyReasoning;
         markUnread?: boolean;
       }
     | {
@@ -898,11 +910,13 @@ async function finalizeRunOnce(
         : (input.partialReply ?? []),
     );
     if (replyBlocks.length > 0) {
+      const reasoning = input.outcome === "completed" ? input.reasoning : undefined;
       const message = await createThreadMessageInTransaction(tx, {
         threadId: input.threadId,
         role: "bot",
         blocks: replyBlocks,
         toolHistory,
+        reasoning,
         botId: input.botId,
         runId: input.runId,
         ...(input.outcome === "completed"
@@ -915,7 +929,12 @@ async function finalizeRunOnce(
         botId: input.botId,
         type: "thread.message.created",
         runId: input.runId,
-        payload: { messageId: message.id, role: "bot", blocks: replyBlocks },
+        payload: {
+          messageId: message.id,
+          role: "bot",
+          blocks: replyBlocks,
+          ...(reasoning && { reasoning }),
+        },
       });
       firstResponse = response.firstResponse;
     }
@@ -1014,10 +1033,10 @@ export async function appendEventInTransaction(
   return { ...event, firstResponse };
 }
 
-/** Thinking markers come only from the run's current lease holder. */
 function isActivityEvent(input: AppendEventInput): boolean {
-  if (input.type !== "thread.meta" || !hasThinkingActivityMarker(input.payload)) return false;
-  ThreadActivityPayloadSchema.parse(input.payload);
+  const schema = input.type === "thread.meta" && threadRunActivitySchema(input.payload);
+  if (!schema) return false;
+  schema.parse(input.payload);
   if (!input.runId || !input.lease) throw new RunHistoryWriteError();
   return true;
 }

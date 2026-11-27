@@ -102,6 +102,7 @@ export function useTranscriptView({
       transcript,
       artifactTarget,
       taskCards,
+      liveReasoning: activeSnapshot?.liveReasoning,
       olderCursor: activeSnapshot?.olderCursor ?? null,
       answerableAskIds,
       dismissableAskIds,
