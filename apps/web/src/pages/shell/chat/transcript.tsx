@@ -16,9 +16,8 @@ import {
   expandPeerReplies,
   groupVoiceChats,
   isPeerReceiptBlocks,
-  liveActivityLine,
-  liveMessageComposing,
   peerExchangeLines,
+  progressMessageId,
   projectBotMentions,
   projectMessageReactions,
   separateAskAnswers,
@@ -26,7 +25,6 @@ import {
   unreadDividerMessageId,
   voiceChatHoldsMessage,
 } from "@rakazo/core";
-import type { GroupAvatarMember } from "@rakazo/ui-web";
 import { Button, cn, Spinner } from "@rakazo/ui-web";
 import { ArrowDown } from "lucide-react";
 import type { CSSProperties, RefObject } from "react";
@@ -41,7 +39,6 @@ import {
   useRef,
   useState,
 } from "react";
-import { ActiveBotGlyph } from "../../../components/ai/CollaborationMarker";
 import { VoiceChatCard } from "../../../components/call/VoiceChatCard";
 import { HostPluginTaskCardView } from "../../../components/messages/HostPluginTaskCard";
 import {
@@ -91,6 +88,7 @@ export const Transcript = memo(function Transcript({
   transcript,
   taskCards = NO_TASK_CARDS,
   liveReasoning,
+  liveTrace,
   meId,
   showToolActivity,
   olderCursor,
@@ -99,7 +97,7 @@ export const Transcript = memo(function Transcript({
   answerableAskIds,
   dismissableAskIds,
   running,
-  workingBots,
+  workingTraceRuns,
   workingRoutine,
   userBubble,
   onCallBack,
@@ -138,6 +136,7 @@ export const Transcript = memo(function Transcript({
   transcript: FoldedTranscript<ThreadMessage>;
   taskCards?: readonly HostPluginTaskCard[];
   liveReasoning?: ThreadSnapshot["liveReasoning"];
+  liveTrace?: ThreadSnapshot["liveTrace"];
   meId?: string;
   showToolActivity: boolean;
   olderCursor: number | null;
@@ -147,7 +146,7 @@ export const Transcript = memo(function Transcript({
   answerableAskIds: Set<string>;
   dismissableAskIds: Set<string>;
   running: boolean;
-  workingBots: GroupAvatarMember[];
+  workingTraceRuns?: readonly { id: string; userId?: string }[];
   workingRoutine?: string;
   /** Your bubbles take the bot's color in its own chat. */
   userBubble?: { background: string; foreground: string };
@@ -300,8 +299,8 @@ export const Transcript = memo(function Transcript({
     () => separateAskAnswers(reactionView.visibleMessages),
     [reactionView.visibleMessages],
   );
-  const visibleReceipts = reactionView.visibleMessages.filter((message) =>
-    messageHasVisibleBlocks(message.blocks, showToolActivity),
+  const visibleReceipts = reactionView.visibleMessages.filter(
+    (message) => message.reasoning || messageHasVisibleBlocks(message.blocks, showToolActivity),
   );
   const exchanges = peerExchangeLines({ ...transcript, messages: visibleReceipts });
   const shownMessages = visibleReceipts.filter(
@@ -315,9 +314,39 @@ export const Transcript = memo(function Transcript({
   // A jump needs older rows, and must keep them after it clears its request.
   if (tailOnly && scrollRequest) setTailOnly(false);
   const showTail = tailOnly && !scrollRequest;
-  const items = groupVoiceChats(reactionView.visibleMessages).filter(
+  const liveIds = new Set([
+    ...(workingTraceRuns?.map((run) => run.id) ?? []),
+    ...Object.keys(liveReasoning ?? {}),
+    ...Object.keys(liveTrace ?? {}),
+  ]);
+  const currentMessages = reactionView.visibleMessages;
+  const liveMessages = currentMessages.filter((message) => message.id.startsWith("progress:"));
+  if (running && liveIds.size === 0 && liveMessages.length === 0) liveIds.add("live");
+  const placeholders: ThreadMessage[] = [];
+  if (running) {
+    const last = currentMessages.at(-1);
+    for (const runId of liveIds) {
+      const id = progressMessageId({ runId });
+      if (liveMessages.some((message) => message.id === id)) continue;
+      placeholders.push({
+        id,
+        threadId: last?.threadId ?? "",
+        seq: (last?.seq ?? 0) + placeholders.length + 1,
+        role: "bot",
+        runId,
+        blocks: [],
+        createdAt: last?.createdAt ?? "",
+      });
+    }
+  }
+  const items = groupVoiceChats(
+    placeholders.length ? [...currentMessages, ...placeholders] : currentMessages,
+  ).filter(
     (item) =>
-      item.kind === "voiceChat" || messageHasVisibleBlocks(item.message.blocks, showToolActivity),
+      item.kind === "voiceChat" ||
+      item.message.id.startsWith("progress:") ||
+      item.message.reasoning ||
+      messageHasVisibleBlocks(item.message.blocks, showToolActivity),
   );
   const rows = joinTranscriptTasks(
     items,
@@ -330,9 +359,7 @@ export const Transcript = memo(function Transcript({
     separatorIds,
     unreadDividerId,
   );
-  const workingLabel =
-    liveActivityLine(messages) ?? (workingRoutine ? t`Running ${workingRoutine}…` : t`Thinking…`);
-  const reasoningRows = Object.entries(liveReasoning ?? {});
+  const workingLabel = workingRoutine ? t`Running ${workingRoutine}…` : undefined;
   const [quoteDraft, setQuoteDraft] = useState<{
     message: ThreadMessage;
     text: string;
@@ -593,7 +620,7 @@ export const Transcript = memo(function Transcript({
     else if (element) {
       setAtEnd(transcriptIsNearEnd(element) && !isHeld(element, heldAt.current));
     }
-  }, [messages, taskCards, liveReasoning, running, showTail, scrollRef, snapToEnd]);
+  }, [messages, taskCards, liveReasoning, liveTrace, running, showTail, scrollRef, snapToEnd]);
 
   useLayoutEffect(() => {
     const button = jumpButtonRef.current;
@@ -755,6 +782,15 @@ export const Transcript = memo(function Transcript({
               );
             }
             const message = item.message;
+            const live = message.id.startsWith("progress:");
+            const runId = live ? message.runId : undefined;
+            const roomyTurn =
+              live ||
+              Boolean(message.reasoning) ||
+              (showToolActivity && message.blocks.some((block) => block.kind === "steps"));
+            const canInspectLiveTrace =
+              Boolean(meId) &&
+              workingTraceRuns?.some((run) => run.id === runId && run.userId === meId);
             const peerReceipt = isPeerReceiptBlocks(message.blocks);
             const messageReactions = reactionView.reactions.get(message.id);
             return (
@@ -788,17 +824,19 @@ export const Transcript = memo(function Transcript({
                                   block.kind === "tool_question",
                               )
                             ? "relative w-full min-w-0 max-w-[min(calc(100%_-_8rem),36rem)] [@media(hover:none)]:max-w-xl"
-                            : `relative ${
-                                message.blocks.some(
-                                  (block) =>
-                                    block.kind === "app_connect" ||
-                                    block.kind === "page" ||
-                                    block.kind === "computer" ||
-                                    block.kind === "routine_event",
-                                ) || pageView.pages.has(message.id)
-                                  ? "w-full"
-                                  : "w-fit"
-                              } min-w-0 ${bubbleFrameWidth(message.role)}`
+                            : roomyTurn
+                              ? "relative w-full min-w-0 max-w-full md:max-w-[39rem]"
+                              : `relative ${
+                                  message.blocks.some(
+                                    (block) =>
+                                      block.kind === "app_connect" ||
+                                      block.kind === "page" ||
+                                      block.kind === "computer" ||
+                                      block.kind === "routine_event",
+                                  ) || pageView.pages.has(message.id)
+                                    ? "w-full"
+                                    : "w-fit"
+                                } min-w-0 ${bubbleFrameWidth(message.role)}`
                       }
                     >
                       <MessageView
@@ -845,6 +883,10 @@ export const Transcript = memo(function Transcript({
                         onOpenAgentImport={onOpenAgentImport}
                         rpc={rpc}
                         showToolActivity={showToolActivity}
+                        liveTrace={runId ? liveTrace?.[runId] : undefined}
+                        liveReasoning={runId ? liveReasoning?.[runId]?.text : undefined}
+                        liveLabel={workingLabel}
+                        canInspectLiveTrace={canInspectLiveTrace}
                         onReply={onReply}
                         onMarkUnread={onMarkUnread}
                         onReact={onReact}
@@ -874,21 +916,6 @@ export const Transcript = memo(function Transcript({
               </Fragment>
             );
           })}
-          {running && reasoningRows.length > 0 ? (
-            reasoningRows.map(([id, { botId, text }]) => (
-              <ActiveBotGlyph
-                key={id}
-                bots={workingBots.filter((bot) => bot.botId === botId)}
-                detail={text}
-              />
-            ))
-          ) : running &&
-            !messages.some(
-              (message) =>
-                message.id.startsWith("progress:") && liveMessageComposing(message.blocks),
-            ) ? (
-            <ActiveBotGlyph bots={workingBots} label={workingLabel} />
-          ) : null}
         </div>
       </ImageGalleryProvider>
       <span role="status" data-testid="reply-announcement" className="sr-only">

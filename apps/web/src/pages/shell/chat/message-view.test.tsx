@@ -16,10 +16,12 @@ const skills = vi.hoisted(() => ({
   save: vi.fn(async () => ({})),
   testRun: vi.fn(async () => ({ runId: "run" })),
 }));
+const toolCallDetail = vi.hoisted(() => vi.fn());
+const liveToolCallDetail = vi.hoisted(() => vi.fn());
 const toolStepPreviews = vi.hoisted(() => vi.fn());
 vi.mock("../../../lib/query/rpc", async (importOriginal) => ({
   ...(await importOriginal<Record<string, unknown>>()),
-  createSpaceRpc: () => ({ threads: { toolStepPreviews } }),
+  createSpaceRpc: () => ({ threads: { liveToolCallDetail, toolCallDetail, toolStepPreviews } }),
   rpc: { skills, artifacts: { get: vi.fn() } },
 }));
 
@@ -39,6 +41,8 @@ let root: Root;
 let queries: QueryClient;
 beforeEach(() => {
   queries = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  toolCallDetail.mockReset();
+  liveToolCallDetail.mockReset();
   toolStepPreviews.mockReset();
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   window.matchMedia ??= ((query: string) => ({
@@ -129,18 +133,13 @@ function renderMessage(
   return { mention, onOpenBot };
 }
 
-it("loads previews when the existing disclosure opens and matches them to each tool block", async () => {
+it("loads only the opened call, using the saved step position for old replies", async () => {
   const blocks: ThreadMessage["blocks"] = [
     { kind: "steps", steps: [{ label: "Read notes", count: 1 }] },
     { kind: "text", text: "Done." },
     { kind: "steps", steps: [{ label: "Search notes", count: 1 }] },
   ];
-  toolStepPreviews.mockResolvedValue({
-    steps: [
-      { tool: "read_file", output: "First result" },
-      { tool: "search", output: "Second result" },
-    ],
-  });
+  toolCallDetail.mockResolvedValue({ arguments: '{"query":"notes"}', result: "Second result" });
   renderView("bot", blocks, {
     showToolActivity: true,
     message: {
@@ -153,26 +152,75 @@ it("loads previews when the existing disclosure opens and matches them to each t
       canInspectToolSteps: true,
     },
   });
+  const trace = container.querySelector('[data-testid="thinking-trace"]')!;
+  act(() => trace.querySelector("button")!.click());
+  expect(toolCallDetail).not.toHaveBeenCalled();
+  const call = [...trace.querySelectorAll("button")].find(
+    (button) => button.textContent === "Search notes",
+  );
+  await act(async () => {
+    call!.click();
+    await flush();
+  });
+  await act(async () => {
+    await flush();
+  });
+  expect(toolCallDetail).toHaveBeenCalledTimes(1);
+  expect(toolCallDetail.mock.calls[0]?.[0]).toEqual({
+    botId: "parent",
+    messageId: "message",
+    stepIndex: 1,
+    callIndex: 0,
+  });
   expect(toolStepPreviews).not.toHaveBeenCalled();
-  const disclosures = container.querySelectorAll<HTMLButtonElement>(
-    '[data-testid="tool-activity"] button[aria-expanded]',
-  );
-  expect(disclosures).toHaveLength(2);
+  expect(trace.textContent).toContain("Second result");
+});
+
+it("refreshes an open live call when it finishes and keeps the details expanded", async () => {
+  const message: ThreadMessage = {
+    id: "progress:run",
+    runId: "run",
+    threadId: "thread",
+    seq: 1,
+    role: "bot",
+    createdAt: new Date().toISOString(),
+    blocks: [],
+  };
+  const args = { arguments: '{"query":"notes"}' };
+  liveToolCallDetail.mockResolvedValueOnce(args).mockResolvedValueOnce({
+    ...args,
+    result: "Found the notes",
+  });
+  const show = (outcome: "running" | "succeeded") =>
+    renderView("bot", [], {
+      message,
+      canInspectLiveTrace: true,
+      showToolActivity: true,
+      liveTrace: [{ kind: "tool", id: "call", groupId: "call", label: "Search notes", outcome }],
+    });
+
+  show("running");
+  const trace = container.querySelector('[data-testid="thinking-trace"]')!;
+  act(() => trace.querySelector("button")!.click());
+  const call = trace.querySelectorAll("button")[1]!;
   await act(async () => {
-    disclosures.item(1).click();
+    call.click();
     await flush();
   });
   await act(async () => {
     await flush();
   });
-  expect(toolStepPreviews).toHaveBeenCalledTimes(1);
-  const titles = [...container.querySelectorAll('[data-testid="tool-rows"] [title]')].map((label) =>
-    label.getAttribute("title"),
-  );
-  expect(titles).toEqual([
-    "read_file\n1 succeeded\nOutput: First result",
-    "search\n1 succeeded\nOutput: Second result",
-  ]);
+  expect(trace.textContent).toContain("Waiting for the result");
+  expect(trace.textContent).toContain("Query");
+  expect(trace.textContent).toContain("notes");
+
+  show("succeeded");
+  await act(async () => {
+    await flush();
+  });
+  expect(call.getAttribute("aria-expanded")).toBe("true");
+  expect(trace.textContent).toContain("Found the notes");
+  expect(liveToolCallDetail).toHaveBeenCalledTimes(2);
 });
 
 it("keeps a received peer marker off the user's side while user replies align to the end", () => {

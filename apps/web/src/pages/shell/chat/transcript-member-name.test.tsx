@@ -105,7 +105,6 @@ function renderTranscript(messages: ThreadMessage[], roster: Roster) {
     answerableAskIds: new Set<string>(),
     dismissableAskIds: new Set<string>(),
     running: false,
-    workingBots: [],
     onLoadOlder: vi.fn(),
     onOpenBot: vi.fn(),
     onAnswer: vi.fn(),
@@ -160,7 +159,7 @@ function replyLine(messageId: string): string {
   );
 }
 
-it("group-removed-member-keeps-author-label", () => {
+it("keeps handoff and reply attribution in context without adding bot headers", () => {
   renderTranscript(
     [
       message("g1", G1, [{ kind: "text", text: "Hello" }]),
@@ -191,10 +190,10 @@ it("group-removed-member-keeps-author-label", () => {
     reply: replyLine("reply"),
     plain: header("plain"),
   }).toEqual({
-    g1: "G1",
+    g1: null,
     handoff: "↪ G2 ← G1",
-    g2: "G2",
-    gone: "Deleted bot",
+    g2: null,
+    gone: null,
     reply: expect.stringContaining("Deleted bot: Gone"),
     plain: null,
   });
@@ -203,7 +202,7 @@ it("group-removed-member-keeps-author-label", () => {
   );
 });
 
-it("group-removed-member-keeps-author-label for an archived bot", () => {
+it("keeps an archived bot’s name in a quoted reply", () => {
   renderTranscript(
     [
       message("old", ARCHIVED, [{ kind: "text", text: "Note" }]),
@@ -219,40 +218,10 @@ it("group-removed-member-keeps-author-label for an archived bot", () => {
     },
   );
 
-  expect({ header: header("old"), reply: replyLine("reply") }).toEqual({
-    header: "G4",
-    reply: expect.stringContaining("G4: Note"),
-  });
+  expect(replyLine("reply")).toContain("G4: Note");
 });
 
-it("group-removed-member-keeps-author-label stays off a direct chat", () => {
-  renderTranscript([message("direct", G1, [{ kind: "text", text: "Hello" }])], {
-    members: undefined,
-    bots: [{ id: G1, name: "Atlas" }],
-    archivedBots: [{ id: G1, name: "Atlas" }],
-  });
-
-  expect(header("direct")).toBeNull();
-  expect(container.querySelector(`[data-message-id="direct"]`)?.textContent).toContain("Hello");
-  expect(container.querySelector(`[data-message-id="direct"]`)?.textContent).not.toContain("Atlas");
-  expect(container.querySelector(`[data-message-id="direct"]`)?.textContent).not.toContain(
-    "Deleted bot",
-  );
-});
-
-it("group-removed-member-keeps-author-label prefers the current member", () => {
-  renderTranscript([message("g1", G1, [{ kind: "text", text: "Hello" }])], {
-    members: [{ botId: G1, name: "G1" }],
-    bots: [{ id: G1, name: "Stale G1" }],
-    archivedBots: [{ id: G1, name: "Older G1" }],
-  });
-
-  expect(header("g1")).toBe("G1");
-  expect(container.querySelector(`[data-message-id="g1"]`)?.textContent).not.toContain("Stale");
-  expect(container.querySelector(`[data-message-id="g1"]`)?.textContent).not.toContain("Older");
-});
-
-it("labels each consecutive sender once and starts over after a time separator", () => {
+it("labels consecutive messages from a person once, without naming bot turns", () => {
   const text = [{ kind: "text", text: "A message" }] as const;
   const member = { id: "member", name: "A member" };
   renderTranscript(
@@ -277,5 +246,5 @@ it("labels each consecutive sender once and starts over after a time separator",
 
   expect(
     ["first", "follow-up", "other-bot", "back", "later", "member", "member-follow-up"].map(header),
-  ).toEqual(["G1", null, "G2", "G1", "G1", "A member", null]);
+  ).toEqual([null, null, null, null, null, "A member", null]);
 });

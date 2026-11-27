@@ -21,6 +21,7 @@ vi.mock("@lingui/react/macro", () => ({
 }));
 
 vi.mock("@lingui/core/macro", () => ({
+  msg: (strings: TemplateStringsArray) => ({ id: strings[0], message: strings[0] }),
   plural: (count: number, forms: { one: string; other: string }) =>
     (count === 1 ? forms.one : forms.other).replace("#", String(count)),
 }));
@@ -109,7 +110,6 @@ function baseProps(messages: readonly ThreadMessage[]): ComponentProps<typeof Tr
     answerableAskIds: new Set<string>(),
     dismissableAskIds: new Set<string>(),
     running: true,
-    workingBots: [{ botId: "bot", color: "orange", status: "running" }],
     onLoadOlder: vi.fn(),
     onOpenBot: vi.fn(),
     onAnswer: vi.fn(),
@@ -140,16 +140,21 @@ function render(props: ComponentProps<typeof Transcript>) {
   act(() => renderWithQueries(<Transcript {...props} />));
 }
 
-it("shows readable reasoning in place of the thinking placeholder", () => {
-  render(baseProps([]));
-  expect(container.textContent).toContain("Thinking…");
+it("keeps the live timeline open when reasoning arrives", () => {
+  render({ ...baseProps([]), workingTraceRuns: [{ id: "run" }] });
+  const summary = container.querySelector<HTMLButtonElement>(
+    '[data-testid="thinking-trace"] button',
+  )!;
+  expect(summary.textContent).toBe("Thinking…");
+  act(() => summary.click());
 
   render({
     ...baseProps([]),
+    workingTraceRuns: [{ id: "run" }],
     liveReasoning: { run: { botId: "bot", text: "Compare both schedules." } },
   });
+  expect(summary.getAttribute("aria-expanded")).toBe("true");
   expect(container.textContent).toContain("Compare both schedules.");
-  expect(container.textContent).not.toContain("Thinking…");
 });
 
 it.each([
@@ -170,18 +175,17 @@ it.each([
     render({ ...baseProps([{ ...reply, reasoning }]), running: false });
 
     const bubble = container.querySelector('[data-testid="message-bot-bubble"]')!;
-    const disclosure = [...bubble.querySelectorAll("button")].find(
-      (button) => button.textContent === `Thought for ${label}`,
-    );
+    const trace = container.querySelector('[data-testid="thinking-trace"]')!;
+    const disclosure = trace.querySelector("button")!;
+    expect(disclosure.textContent).toBe(`Worked for ${label}`);
     expect(disclosure?.getAttribute("aria-expanded")).toBe("false");
     expect(bubble.textContent).not.toContain(text);
-    expect(bubble.textContent!.indexOf(`Thought for ${label}`)).toBeLessThan(
-      bubble.textContent!.indexOf("Tuesday is free."),
-    );
+    expect(trace.compareDocumentPosition(bubble) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(trace.textContent).not.toContain(text);
 
     act(() => disclosure?.click());
     expect(disclosure?.getAttribute("aria-expanded")).toBe("true");
-    expect(bubble.textContent).toContain(text);
+    expect(trace.textContent).toContain(text);
   },
 );
 
@@ -202,7 +206,7 @@ it("hides the reasoning disclosure when the reply has no readable reasoning", ()
     running: false,
   });
   expect(container.textContent).toContain("Tuesday is free.");
-  expect(container.textContent).not.toContain("Thought for");
+  expect(container.querySelector('[data-testid="thinking-trace"]')).toBeNull();
 });
 
 it("places hosted tasks in the loaded transcript without remounting a task when history expands", () => {
@@ -226,7 +230,7 @@ it("places hosted tasks in the loaded transcript without remounting a task when 
     title: "Prepare the outline",
     startedAt: first - 30_000,
   };
-  const props = baseProps(messages);
+  const props = { ...baseProps(messages), running: false };
   const rows = () =>
     [
       ...container.querySelectorAll<HTMLElement>("[data-message-id],[data-host-plugin-task-id]"),
