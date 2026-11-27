@@ -5,11 +5,11 @@ import {
   CloudDownload,
   Cpu,
   CreditCard,
-  FileText,
   FlaskConical,
   Gauge,
   KeyRound,
   Layers,
+  ListChecks,
   MessageCircle,
   Monitor,
   Puzzle,
@@ -76,8 +76,8 @@ export function useSettingsNavItems(available: {
     {
       id: "bot-rules",
       label: t`Bot rules`,
-      icon: FileText,
-      description: t`Instructions your bots follow when they work for you.`,
+      icon: ListChecks,
+      description: t`Rules every bot follows when it works for you.`,
     },
     {
       id: "voice",

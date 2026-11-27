@@ -1,15 +1,33 @@
-import type { OwnerRulesPage, OwnerRulesVersion } from "@rakazo/contracts";
+import type {
+  OwnerRulesPage,
+  OwnerRulesRestoreInput,
+  OwnerRulesSaveInput,
+  OwnerRulesVersion,
+  OwnerRulesVersionRef,
+} from "@rakazo/contracts";
+import { OWNER_RULES_CONFLICT } from "@rakazo/contracts";
 import { ClientError } from "@rakazo/core";
-import type { PrismaClient } from "../database/client.js";
+import type {
+  OwnerRulesVersion as OwnerRulesVersionRow,
+  PrismaClient,
+} from "../database/client.js";
+import { withTransactionRetry } from "../database/transaction-retry.js";
 
 type OwnerRulesDb = Pick<PrismaClient, "ownerRulesVersion">;
+type OwnerRulesWriteDb = Pick<PrismaClient, "$transaction">;
 const newestFirst = { id: "desc" } as const;
 const pageSize = 20;
 
-function versionDto(
-  row: Omit<OwnerRulesVersion, "createdAt"> & { createdAt: Date },
-): OwnerRulesVersion {
-  return { ...row, createdAt: row.createdAt.toISOString() };
+class OwnerRulesConflictError extends ClientError {
+  constructor() {
+    super("CONFLICT", "Bot rules changed. Review the latest version.", OWNER_RULES_CONFLICT);
+    this.name = "OwnerRulesConflictError";
+  }
+}
+
+function versionDto(row: OwnerRulesVersionRow): OwnerRulesVersion {
+  const { id, userId, text, createdAt, revision, reason } = row;
+  return { id, userId, text, createdAt: createdAt.toISOString(), revision, reason };
 }
 
 export async function listOwnerRulesVersions(
@@ -27,22 +45,68 @@ export async function listOwnerRulesVersions(
 }
 
 export async function saveOwnerRules(
-  prisma: OwnerRulesDb,
+  prisma: OwnerRulesWriteDb,
   userId: string,
-  text: string,
+  { text, sessionId, expected }: OwnerRulesSaveInput,
 ): Promise<OwnerRulesVersion> {
-  return versionDto(await prisma.ownerRulesVersion.create({ data: { userId, text } }));
+  return writeOwnerRules(prisma, userId, expected, async (versions, latest) => {
+    if (latest?.sessionId === sessionId) {
+      return versions.update({
+        where: { id: latest.id, userId },
+        data: { text, revision: { increment: 1 } },
+      });
+    }
+
+    // Another edit or restore closed this session. Its version stays in history.
+    const closedSession = await versions.findUnique({
+      where: { userId_sessionId: { userId, sessionId } },
+      select: { id: true },
+    });
+    if (closedSession) throw new OwnerRulesConflictError();
+    return versions.create({ data: { userId, text, sessionId } });
+  });
 }
 
 export async function restoreOwnerRules(
-  prisma: OwnerRulesDb,
+  prisma: OwnerRulesWriteDb,
   userId: string,
-  versionId: number,
+  { versionId, expected }: OwnerRulesRestoreInput,
 ): Promise<OwnerRulesVersion> {
-  const version = await prisma.ownerRulesVersion.findUnique({
-    where: { id: versionId, userId },
-    select: { text: true },
+  return writeOwnerRules(prisma, userId, expected, async (versions) => {
+    const version = await versions.findUnique({
+      where: { id: versionId, userId },
+      select: { text: true },
+    });
+    if (!version) throw new ClientError("NOT_FOUND", "Bot rules version is unavailable.");
+    return versions.create({ data: { userId, text: version.text, reason: "restored" } });
   });
-  if (!version) throw new ClientError("NOT_FOUND", "Bot rules version is unavailable.");
-  return saveOwnerRules(prisma, userId, version.text);
+}
+
+async function writeOwnerRules(
+  prisma: OwnerRulesWriteDb,
+  userId: string,
+  expected: OwnerRulesVersionRef | null,
+  write: (
+    versions: OwnerRulesDb["ownerRulesVersion"],
+    latest: OwnerRulesVersionRow | null,
+  ) => Promise<OwnerRulesVersionRow>,
+): Promise<OwnerRulesVersion> {
+  const row = await withTransactionRetry(() =>
+    prisma.$transaction(
+      async (tx) => {
+        await tx.$queryRaw`
+          SELECT pg_advisory_xact_lock(hashtextextended(${`owner-rules:${userId}`}, 0))::text AS "lock"
+        `;
+        const versions = tx.ownerRulesVersion;
+        const latest = await versions.findFirst({ where: { userId }, orderBy: newestFirst });
+        if (latest?.id !== expected?.id || latest?.revision !== expected?.revision) {
+          throw new OwnerRulesConflictError();
+        }
+        return write(versions, latest);
+      },
+      // Read the head from a fresh snapshot after acquiring the lock.
+      { isolationLevel: "ReadCommitted" },
+    ),
+  );
+  return versionDto(row);
 }

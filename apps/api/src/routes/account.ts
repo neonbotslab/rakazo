@@ -167,13 +167,13 @@ export function accountRoutes(ctx: RouterContext) {
       ),
       save: sessionOwnerRules.save.handler(async ({ context, input }) => {
         const { userId } = context.actor;
-        const version = await saveOwnerRules(deps.prisma, userId, input.text);
+        const version = await saveOwnerRules(deps.prisma, userId, input);
         await preferencesChanged(userId);
         return version;
       }),
       restore: sessionOwnerRules.restore.handler(async ({ context, input }) => {
         const { userId } = context.actor;
-        const version = await restoreOwnerRules(deps.prisma, userId, input.versionId);
+        const version = await restoreOwnerRules(deps.prisma, userId, input);
         await preferencesChanged(userId);
         return version;
       }),

@@ -3003,13 +3003,22 @@ model UserActionApprovalRule {
   @@map("user_action_approval_rules")
 }
 
-model OwnerRulesVersion {
-  id        Int      @id @default(autoincrement())
-  userId    String
-  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  text      String
-  createdAt DateTime @default(now())
+enum OwnerRulesVersionReason {
+  saved
+  restored
+}
 
+model OwnerRulesVersion {
+  id        Int                     @id @default(autoincrement())
+  userId    String
+  user      User                    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  text      String
+  createdAt DateTime                @default(now())
+  sessionId String?                 @db.Uuid
+  revision  Int                     @default(1)
+  reason    OwnerRulesVersionReason @default(saved)
+
+  @@unique([userId, sessionId])
   @@index([userId, id(sort: Desc)])
   @@map("owner_rules_versions")
 }

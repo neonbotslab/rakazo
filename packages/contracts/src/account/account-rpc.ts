@@ -17,7 +17,8 @@ import {
 import { AppBootstrapSchema, MeSchema, SignupSurveySchema } from "./me.js";
 import {
   OwnerRulesPageSchema,
-  OwnerRulesTextSchema,
+  OwnerRulesRestoreInputSchema,
+  OwnerRulesSaveInputSchema,
   OwnerRulesVersionIdSchema,
   OwnerRulesVersionSchema,
 } from "./owner-rules.js";
@@ -66,10 +67,8 @@ export const accountRpc = {
     list: oc
       .input(z.object({ before: OwnerRulesVersionIdSchema.optional() }))
       .output(OwnerRulesPageSchema),
-    save: oc.input(z.object({ text: OwnerRulesTextSchema })).output(OwnerRulesVersionSchema),
-    restore: oc
-      .input(z.object({ versionId: OwnerRulesVersionIdSchema }))
-      .output(OwnerRulesVersionSchema),
+    save: oc.input(OwnerRulesSaveInputSchema).output(OwnerRulesVersionSchema),
+    restore: oc.input(OwnerRulesRestoreInputSchema).output(OwnerRulesVersionSchema),
   },
   preferences: {
     update: oc

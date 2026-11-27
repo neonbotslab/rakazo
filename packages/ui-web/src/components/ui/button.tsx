@@ -33,6 +33,7 @@ const buttonVariants = cva(
         "icon-xs": `${controlSquare.xs} rounded-[min(var(--radius-md),10px)] in-data-[slot=button-group]:rounded-lg [&_svg:not([class*='size-'])]:size-3`,
         "icon-sm": `${controlSquare.sm} rounded-[min(var(--radius-md),12px)] in-data-[slot=button-group]:rounded-lg`,
         "icon-lg": controlSquare.lg,
+        "icon-xl": controlSquare.xl,
       },
     },
     // A text button reads as text, so it sits flush with what is around it.
