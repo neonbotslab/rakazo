@@ -11,6 +11,7 @@ import { McpTransportSchema } from "../integrations/mcp.js";
 import { McpAppCspSchema } from "../integrations/mcp-app.js";
 import { OutgoingDraft } from "../integrations/outgoing-draft.js";
 import { ToolQuestionSchema } from "../integrations/tool-question.js";
+import { ReplyTraceEntrySchema } from "./reply-trace.js";
 
 export const MessageRole = z.enum(["user", "bot", "system"]);
 export const BotMessageIntent = z.enum(["request", "result", "question", "status", "fyi"]);
@@ -276,6 +277,7 @@ export const MessageBlock = z.discriminatedUnion("kind", [
   }),
   z.object({
     kind: z.literal("steps"),
+    trace: z.array(ReplyTraceEntrySchema).optional(),
     steps: z.array(
       z.object({
         label: z.string(),
@@ -455,6 +457,7 @@ export type MessageBlock = z.infer<typeof MessageBlock>;
 
 /** One call a reply kept for the bot's later turns: what it was sent and what came back. */
 export const ToolStepCallSchema = z.object({
+  callId: z.string().optional(),
   /** The call's arguments as JSON. */
   arguments: z.string().optional(),
   result: z.string().optional(),

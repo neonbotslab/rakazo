@@ -1,7 +1,6 @@
 import type { BotAvatarSet } from "@rakazo/contracts";
 import { splitPeerLabel } from "@rakazo/core";
-import type { GroupAvatarMember } from "@rakazo/ui-web";
-import { BotAvatar, GroupAvatar } from "@rakazo/ui-web";
+import { BotAvatar } from "@rakazo/ui-web";
 
 export function CollaborationMarker({
   color,
@@ -37,42 +36,6 @@ export function CollaborationMarker({
         ) : null}
         {parts.after ? <span className="whitespace-pre-wrap">{parts.after}</span> : null}
       </button>
-    </div>
-  );
-}
-
-/** The working bot with what it is doing right now, such as its current tool call. */
-export function ActiveBotGlyph({
-  bots,
-  label,
-  detail,
-}: { bots: GroupAvatarMember[] } & (
-  | { label: string; detail?: never }
-  | { detail: string; label?: never }
-)) {
-  if (detail !== undefined) {
-    return (
-      <div className="flex min-w-0 items-start gap-2.5 px-1 py-1">
-        <GroupAvatar members={bots} size={28} />
-        <p
-          dir="auto"
-          className="min-w-0 max-w-prose wrap-anywhere whitespace-pre-wrap pt-0.5 text-body-lg text-muted-foreground"
-        >
-          {detail}
-        </p>
-      </div>
-    );
-  }
-  return (
-    <div role="status" className="flex min-h-10 min-w-0 items-center gap-2.5 px-1">
-      <GroupAvatar members={bots} size={28} />
-      <span
-        key={label}
-        dir="auto"
-        className="block min-w-0 truncate text-body-lg text-muted-foreground animate-in fade-in-0 slide-in-from-bottom-1 duration-150 motion-reduce:animate-none"
-      >
-        <span className="text-shimmer">{label}</span>
-      </span>
     </div>
   );
 }

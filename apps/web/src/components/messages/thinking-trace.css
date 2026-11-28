@@ -1,0 +1,111 @@
+.thinking-trace {
+  --trace-width: 33rem;
+  --trace-icon: calc(var(--spacing) * 3.5);
+  --trace-touch: calc(var(--spacing) * 12);
+  --trace-node-center: calc(var(--trace-touch) / 2);
+  --trace-rail-width: thin;
+  --trace-rail-offset: calc(var(--trace-icon) / -2);
+  --trace-label-offset: calc(var(--trace-icon) + var(--spacing) * 2);
+  --trace-press-scale: 0.98;
+  --trace-ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
+  --trace-duration: var(--default-transition-duration);
+  inline-size: min(calc(100% - var(--trace-rail-offset)), var(--trace-width));
+  margin-inline-start: var(--trace-rail-offset);
+}
+
+.trace-trigger {
+  min-block-size: var(--trace-touch);
+  transition: background-color var(--trace-duration) ease-out;
+}
+
+.trace-trigger > * {
+  transition: scale var(--trace-duration) var(--trace-ease-spring);
+}
+
+.trace-trigger:active > * {
+  scale: var(--trace-press-scale);
+}
+
+.trace-chevron {
+  inline-size: var(--trace-icon);
+  block-size: var(--trace-icon);
+  transition: rotate var(--trace-duration) var(--trace-ease-spring);
+}
+
+.trace-trigger[aria-expanded="true"] > .trace-chevron {
+  rotate: 90deg;
+}
+
+.trace-node {
+  position: relative;
+}
+
+.trace-node::before {
+  content: "";
+  position: absolute;
+  inset-block: 0;
+  inset-inline-start: calc(var(--trace-icon) / 2);
+  border-inline-start: var(--trace-rail-width) solid var(--border);
+  pointer-events: none;
+}
+
+.trace-node:first-child::before {
+  inset-block-start: var(--trace-node-center);
+}
+
+.trace-node:last-child::before {
+  inset-block-end: calc(100% - var(--trace-node-center));
+}
+
+.trace-thought {
+  --trace-node-center: calc(var(--spacing) * 2.5);
+}
+
+.trace-marker {
+  position: relative;
+  display: grid;
+  inline-size: var(--trace-icon);
+  block-size: var(--trace-icon);
+  place-items: center;
+  background-color: var(--background);
+}
+
+.trace-marker > svg {
+  inline-size: var(--trace-icon);
+  block-size: var(--trace-icon);
+}
+
+.trace-tool-trigger {
+  display: grid;
+  grid-template-columns: var(--trace-icon) minmax(0, 1fr) auto var(--trace-icon);
+}
+
+.trace-sub-trigger {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto var(--trace-icon);
+}
+
+.trace-detail {
+  margin-inline-start: var(--trace-label-offset);
+}
+
+.trace-field {
+  display: grid;
+  grid-template-columns: minmax(0, 5.5rem) minmax(0, 1fr);
+}
+
+@media (width < 30rem) {
+  .trace-field {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .thinking-trace {
+    --trace-duration: 0s;
+  }
+
+  .trace-trigger:active > * {
+    scale: 1;
+  }
+}

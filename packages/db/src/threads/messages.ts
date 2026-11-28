@@ -2,11 +2,24 @@ import type {
   Actor,
   MessageAuthor,
   ReplyReasoning,
+  SavedToolCallSelector,
+  ToolCallDetail,
   ToolHistory,
   ToolStepPreviews,
 } from "@rakazo/contracts";
-import { MessageBlock, TOOL_STEP_PREVIEW_LENGTH, ToolHistorySchema } from "@rakazo/contracts";
-import { ClientError, splitToolHistory, truncatePlainText } from "@rakazo/core";
+import {
+  MessageBlock,
+  TOOL_STEP_PREVIEW_LENGTH,
+  ToolCallDetailSchema,
+  ToolHistorySchema,
+} from "@rakazo/contracts";
+import {
+  ACTIVE_RUN_STATUSES,
+  ClientError,
+  isRecord,
+  splitToolHistory,
+  truncatePlainText,
+} from "@rakazo/core";
 import type { PrismaClient } from "../database/client.js";
 import { Prisma } from "../database/client.js";
 import { readJsonColumn } from "../database/json-column.js";
@@ -210,12 +223,14 @@ class ToolStepAccessError extends ClientError {
   }
 }
 
-/** Only the run starter can read previews of the reply's retained tool calls. */
-export async function loadOwnToolStepPreviews(
+type ToolDetailActor = Pick<Actor, "spaceId" | "userId">;
+type SavedToolCallScope = { threadId: string; messageId: string };
+
+async function loadOwnToolHistory(
   prisma: PrismaClient,
-  actor: Pick<Actor, "spaceId" | "userId">,
-  { threadId, messageId }: { threadId: string; messageId: string },
-): Promise<ToolStepPreviews | null> {
+  actor: ToolDetailActor,
+  { threadId, messageId }: SavedToolCallScope,
+): Promise<ToolHistory | null> {
   const owned = await ownToolStepMessageRuns(prisma, { threadId, userId: actor.userId }, [
     messageId,
   ]);
@@ -240,7 +255,6 @@ export async function loadOwnToolStepPreviews(
     { fallback: null },
   );
   if (!history) return null;
-
   const { blocks, intact } = readMessageBlocks(message);
   if (!intact) return null;
   const counts: number[] = [];
@@ -256,6 +270,17 @@ export async function loadOwnToolStepPreviews(
   ) {
     return null;
   }
+  return history;
+}
+
+/** Only the run starter can read previews of the reply's retained tool calls. */
+export async function loadOwnToolStepPreviews(
+  prisma: PrismaClient,
+  actor: ToolDetailActor,
+  scope: SavedToolCallScope,
+): Promise<ToolStepPreviews | null> {
+  const history = await loadOwnToolHistory(prisma, actor, scope);
+  if (!history) return null;
   return {
     steps: history.steps.map((step) => {
       const lastCall = step?.calls.at(-1);
@@ -268,6 +293,66 @@ export async function loadOwnToolStepPreviews(
       };
     }),
   };
+}
+
+export async function loadOwnToolCallDetail(
+  prisma: PrismaClient,
+  actor: ToolDetailActor,
+  input: SavedToolCallScope & SavedToolCallSelector,
+): Promise<ToolCallDetail | null> {
+  const history = await loadOwnToolHistory(prisma, actor, input);
+  if (!history) return null;
+  const call =
+    "callId" in input
+      ? history.steps
+          .flatMap((step) => step?.calls ?? [])
+          .find((call) => call.callId === input.callId)
+      : history.steps[input.stepIndex]?.calls[input.callIndex];
+  if (!call) return null;
+  return {
+    arguments: call.arguments,
+    result: call.result,
+    failed: call.failed,
+    hasScreenshot: call.image ? true : undefined,
+  };
+}
+
+export async function loadOwnLiveToolCallDetail(
+  prisma: PrismaClient,
+  { spaceId, userId }: ToolDetailActor,
+  { threadId, runId, callId }: { threadId: string; runId: string; callId: string },
+): Promise<ToolCallDetail | null> {
+  const run = await prisma.run.findUnique({
+    where: { id: runId, spaceId, threadId, userId },
+    select: { botId: true, status: true },
+  });
+  if (!run) throw new ToolStepAccessError();
+  if (!ACTIVE_RUN_STATUSES.some((status) => status === run.status)) return null;
+  const events = await prisma.event.findMany({
+    where: {
+      spaceId,
+      threadId,
+      botId: run.botId,
+      runId,
+      type: { in: ["agent.tool.called", "agent.tool.completed"] },
+      payload: { path: ["toolStepId"], equals: callId },
+      toolCallDetail: { not: Prisma.DbNull },
+    },
+    orderBy: { seq: "asc" },
+    select: { id: true, payload: true, toolCallDetail: true },
+  });
+  let detail: ToolCallDetail | null = null;
+  for (const event of events) {
+    if (!isRecord(event.payload) || event.payload.toolStepId !== callId) continue;
+    const entry = readJsonColumn(
+      ToolCallDetailSchema.nullable(),
+      event.toolCallDetail,
+      { table: "events", column: "toolCallDetail", id: event.id },
+      { fallback: null },
+    );
+    if (entry) detail = Object.assign(detail ?? {}, entry);
+  }
+  return detail;
 }
 
 function toolStepPreviewText(text: string): string {

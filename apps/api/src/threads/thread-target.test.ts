@@ -4957,6 +4957,7 @@ describe("stopThreadRuns", () => {
         OR: [
           { type: "thread.progress" },
           { type: "thread.meta", payload: { path: ["reasoningChanged"], equals: true } },
+          { type: "thread.meta", payload: { path: ["traceReasoningChanged"], equals: true } },
           { type: "thread.meta", payload: { equals: { activity: { thinking: true } } } },
           { type: "thread.meta", payload: { equals: { activity: { thinking: false } } } },
         ],

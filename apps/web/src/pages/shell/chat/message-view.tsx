@@ -7,14 +7,14 @@ import type {
   LoginFieldInput,
   MessageBlock,
   MessageReaction,
+  ReplyTraceEntry,
   ThreadMessage,
 } from "@rakazo/contracts";
 import type { ChildBotBlock, PeerExchange } from "@rakazo/core";
 import { isPeerReceiptBlocks, isToolActivityBlock, otherAuthor } from "@rakazo/core";
 import { BotAvatar, Button, cn, resolvePersonaColorDef } from "@rakazo/ui-web";
-import { useQuery } from "@tanstack/react-query";
 import { UserRound } from "lucide-react";
-import { memo, useCallback, useMemo, useState } from "react";
+import { memo, useCallback, useMemo } from "react";
 import { CollaborationMarker } from "../../../components/ai/CollaborationMarker";
 import { ComputerCard } from "../../../components/computers/ComputerCard";
 import { ArtifactFileCard } from "../../../components/messages/ArtifactFileCard";
@@ -23,28 +23,16 @@ import { CloudAgentCard } from "../../../components/messages/CloudAgentCard";
 import { McpAppCard } from "../../../components/messages/McpAppCard";
 import { OutgoingDraftCard } from "../../../components/messages/OutgoingDraftCard";
 import { SubagentCard } from "../../../components/messages/SubagentCard";
-import {
-  LIVE_TOOL_STEP_WINDOW,
-  StandaloneToolActivity,
-  ToolActivityDisclosure,
-  ToolOnlyNarration,
-  ToolSteps,
-} from "../../../components/messages/ToolActivityDisclosure";
+import { ThinkingTrace } from "../../../components/messages/ThinkingTrace";
 import { ToolQuestionCard } from "../../../components/messages/ToolQuestionCard";
+import { messageTrace } from "../../../components/messages/thinking-trace-model";
 import { PageBlockCard } from "../../../components/pages/PageBlockCard";
 import { SkillDraftCard } from "../../../components/teach/SkillDraftCard";
-import {
-  isToolOnlyNarration,
-  renderableMessageBlocks,
-  shouldRenderToolCard,
-  toolStepCount,
-  toolStepPreviewsByBlock,
-} from "../../../lib/chat/tool-activity-view";
+import { renderableMessageBlocks } from "../../../lib/chat/tool-activity-view";
 import { messageProviderLabel } from "../../../lib/integrations/messaging";
 import type { ArtifactTarget } from "../../../lib/pages/artifact-open";
 import type { PageBlock } from "../../../lib/pages/page-cards";
 import { useOpenPage } from "../../../lib/pages/pages";
-import { useSpaceQueries } from "../../../lib/query/query";
 import type { createSpaceRpc } from "../../../lib/query/rpc";
 import type { ImportSetupTarget } from "../bots/import-setup-card";
 import { ImportSetupCard } from "../bots/import-setup-card";
@@ -93,6 +81,10 @@ export const MessageView = memo(function MessageView({
   onOpenAgentImport,
   rpc,
   showToolActivity,
+  liveTrace,
+  liveReasoning,
+  liveLabel,
+  canInspectLiveTrace,
   onReply,
   onMarkUnread,
   markedUnread = false,
@@ -150,6 +142,10 @@ export const MessageView = memo(function MessageView({
   onOpenAgentImport?: () => void;
   rpc: ReturnType<typeof createSpaceRpc>;
   showToolActivity: boolean;
+  liveTrace?: readonly ReplyTraceEntry[];
+  liveReasoning?: string;
+  liveLabel?: string;
+  canInspectLiveTrace?: boolean;
   onReply: (message: ThreadMessage) => void;
   onMarkUnread: (message: ThreadMessage) => void;
   markedUnread?: boolean;
@@ -158,7 +154,6 @@ export const MessageView = memo(function MessageView({
   const { t } = useLingui();
   const isNarration =
     message.role === "bot" &&
-    message.blocks.length > 0 &&
     message.blocks.every(
       (block) => block.kind === "text" || block.kind === "progress" || block.kind === "steps",
     );
@@ -188,24 +183,7 @@ export const MessageView = memo(function MessageView({
       ))}
     </div>
   ) : null;
-  const visibleNarrationBlocks = renderableMessageBlocks(blocks, showToolActivity);
-  const canReadToolSteps = !isLive && showToolActivity && message.canInspectToolSteps;
-  const [requested, setRequested] = useState(false);
-  const queries = useSpaceQueries();
-  const { data: toolStepPreviews } = useQuery({
-    ...queries.threads.toolStepPreviews.queryOptions({
-      input: { ...artifactTarget, messageId: message.id },
-    }),
-    enabled: Boolean(canReadToolSteps && requested),
-    staleTime: Infinity,
-    refetchOnMount: false,
-  });
-  const previews = canReadToolSteps ? toolStepPreviews?.steps : undefined;
-  const previewsByBlock = toolStepPreviewsByBlock(
-    isNarration ? visibleNarrationBlocks : blocks,
-    previews,
-  );
-  const onOpenToolSteps = !isLive ? () => setRequested(true) : undefined;
+  const visibleNarrationBlocks = renderableMessageBlocks(blocks, false);
   const renderMention = useCallback(
     (id: string) => {
       const block = mentions?.find((bot) => bot.botId === id);
@@ -224,28 +202,9 @@ export const MessageView = memo(function MessageView({
   const replyBotId = message.replyPreview?.botId ?? replyParent?.botId;
   const author = message.role === "user" ? otherAuthor(message.author, meId) : undefined;
   const replyAuthor = otherAuthor(message.replyPreview?.author ?? replyParent?.author, meId);
-  const speakerBot = message.botId ? peerBot?.(message.botId) : undefined;
-  const speakerColorDef = useMemo(
-    () => resolvePersonaColorDef(message.botId ?? "bot", speakerBot?.color),
-    [message.botId, speakerBot?.color],
-  );
   const messageContext = (
     <>
-      {hideSenderLabel ? null : speakerName ? (
-        <div
-          className="mb-1.5 flex items-center gap-2 text-body-sm font-semibold tracking-tight"
-          dir="auto"
-          style={{ color: speakerColorDef.hex }}
-        >
-          <BotAvatar
-            color={speakerBot?.color ?? FALLBACK_BOT_COLOR}
-            avatarSet={speakerBot?.avatarSet}
-            identity={message.botId}
-            size={22}
-          />
-          {speakerName}
-        </div>
-      ) : author ? (
+      {!hideSenderLabel && author ? (
         <div
           className="mb-1.5 text-end text-body-sm font-semibold tracking-tight text-muted-foreground"
           dir="auto"
@@ -268,7 +227,7 @@ export const MessageView = memo(function MessageView({
       />
     </>
   );
-  // Anchored below the speaker and reply line so the rail centers on the bubble itself.
+  // Anchor message actions on the first bubble.
   // A message with text and attachments anchors it on its first text bubble.
   const textAnchorIndex = message.blocks.findIndex((block) => block.kind === "text");
   const hoverAnchorIndex =
@@ -287,28 +246,44 @@ export const MessageView = memo(function MessageView({
       onReact={onReact}
     />
   );
+  const activity =
+    message.role === "bot"
+      ? messageTrace(message, liveTrace, showToolActivity, liveReasoning)
+      : undefined;
+  const trace =
+    activity && (isLive || activity.entries.length > 0) ? (
+      <ThinkingTrace
+        {...activity}
+        live={isLive}
+        label={liveLabel}
+        source={
+          isLive
+            ? message.runId
+              ? { target: artifactTarget, canInspect: canInspectLiveTrace, runId: message.runId }
+              : undefined
+            : {
+                target: artifactTarget,
+                canInspect: message.canInspectToolSteps,
+                messageId: message.id,
+              }
+        }
+      />
+    ) : null;
   if (isNarration) {
-    if (visibleNarrationBlocks.length === 0) return null;
-    if (isToolOnlyNarration(message.blocks, showToolActivity)) {
-      return (
+    if (visibleNarrationBlocks.length === 0)
+      return trace ? (
         <>
-          {messageContext}
-          <div className="relative">
-            <ToolOnlyNarration
-              blocks={visibleNarrationBlocks}
-              live={isLive}
-              previews={previews}
-              onOpen={onOpenToolSteps}
-            />
-            {hoverActions}
-          </div>
+          {trace}
+          {hoverActions}
         </>
-      );
-    }
+      ) : null;
     return (
       <>
+        {trace}
         {messageContext}
-        <div className="relative w-fit max-w-full [@media(hover:none)]:w-full">
+        <div
+          className={cn("relative w-fit max-w-full [@media(hover:none)]:w-full", trace && "mt-3")}
+        >
           <div className="flex w-fit max-w-full justify-start [@media(hover:none)]:w-full">
             <div
               data-testid="message-bot-bubble"
@@ -316,25 +291,6 @@ export const MessageView = memo(function MessageView({
               dir="auto"
             >
               {visibleNarrationBlocks.map((block, i) => {
-                if (block.kind === "steps") {
-                  return (
-                    <ToolActivityDisclosure
-                      key={i}
-                      live={isLive}
-                      stepCount={toolStepCount(block.steps)}
-                      durationMs={block.durationMs}
-                      onOpen={onOpenToolSteps}
-                    >
-                      <ToolSteps
-                        steps={block.steps}
-                        currentIndex={isLive ? block.steps.length - 1 : undefined}
-                        limit={isLive ? LIVE_TOOL_STEP_WINDOW : undefined}
-                        previews={previewsByBlock[i]}
-                        durationMs={block.durationMs}
-                      />
-                    </ToolActivityDisclosure>
-                  );
-                }
                 if (block.kind === "text" || block.kind === "progress") {
                   return (
                     <div
@@ -376,27 +332,16 @@ export const MessageView = memo(function MessageView({
   }
   return (
     <>
+      {trace}
       {messageContext}
       <div
         className={cn(
           "relative flex flex-col gap-2",
+          trace && "mt-3",
           message.role === "user" && !peerReceipt && "items-end",
         )}
       >
         {blocks.map((block, i) => {
-          if (block.kind === "steps" && shouldRenderToolCard(block, showToolActivity)) {
-            return (
-              <StandaloneToolActivity
-                key={i}
-                live={isLive}
-                steps={block.steps}
-                stepCount={toolStepCount(block.steps)}
-                durationMs={block.durationMs}
-                previews={previewsByBlock[i]}
-                onOpen={onOpenToolSteps}
-              />
-            );
-          }
           if (isToolActivityBlock(block)) return null;
           if (block.kind === "handoff") {
             const from = memberName?.(block.fromBotId) ?? t`bot`;

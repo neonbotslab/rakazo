@@ -129,6 +129,17 @@ const TABLES: TableSpec[] = [
       Prisma.sql`UPDATE events SET payload = ${JSON.stringify(row.payload)}::jsonb WHERE id = ${id}`,
   },
   {
+    model: "Event",
+    delegate: "event",
+    columns: ["toolCallDetail"],
+    json: true,
+    scan: (cursor, limit) => Prisma.sql`
+      SELECT id, jsonb_build_array("toolCallDetail") AS values, "spaceId", "threadId" AS owner
+      FROM events WHERE id > ${cursor} AND "toolCallDetail" IS NOT NULL ORDER BY id LIMIT ${limit}`,
+    writePlaintext: (id, row) =>
+      Prisma.sql`UPDATE events SET "toolCallDetail" = ${JSON.stringify(row.toolCallDetail)}::jsonb WHERE id = ${id}`,
+  },
+  {
     model: "MemoryDocument",
     delegate: "memoryDocument",
     columns: ["content"],
@@ -418,6 +429,9 @@ export async function contentEncryptionStatus(
       WHEN 'object' THEN jsonb_exists(payload, '$sealed')
       WHEN 'array' THEN jsonb_array_length(payload) = 0 OR jsonb_exists(payload->0, '$sealed')
       ELSE false END) FROM events
+    UNION ALL
+    SELECT 'events.toolCallDetail', count(*) FILTER (WHERE "toolCallDetail" IS NOT NULL),
+      count(*) FILTER (WHERE NOT jsonb_exists("toolCallDetail", '$sealed')) FROM events
     UNION ALL
     SELECT 'memory_documents', count(*), count(*) FILTER (WHERE content NOT LIKE 'rkz1:%') FROM memory_documents
     UNION ALL

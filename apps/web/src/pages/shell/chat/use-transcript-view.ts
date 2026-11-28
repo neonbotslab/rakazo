@@ -8,11 +8,9 @@ import {
   isRunWorking,
   workingRoutineName,
 } from "@rakazo/core";
-import type { GroupAvatarMember } from "@rakazo/ui-web";
 import { useCallback, useMemo } from "react";
 import type { ArtifactTarget } from "../../../lib/pages/artifact-open";
 import { useHostPluginChatCards } from "../../../lib/plugin-host/chat-cards";
-import { FALLBACK_BOT_COLOR } from "./chat-shared";
 import { resolveTranscriptMemberName as groupTranscriptMemberName } from "./transcript-member-name";
 
 /** What the open chat's transcript shows: its snapshot, the runs working in it, and who is who. */
@@ -70,16 +68,6 @@ export function useTranscriptView({
     },
     [bots, transcriptMembers],
   );
-  const workingBots: GroupAvatarMember[] = workingRuns.map((run) => {
-    const bot = resolveBot(run.botId);
-    return {
-      botId: run.botId,
-      color: bot?.color ?? FALLBACK_BOT_COLOR,
-      avatarSet: bot?.avatarSet,
-      name: bot?.name,
-      status: run.status,
-    };
-  });
   const resolveMemberName = useCallback(
     (botId: string | undefined) =>
       groupTranscriptMemberName({
@@ -103,11 +91,12 @@ export function useTranscriptView({
       artifactTarget,
       taskCards,
       liveReasoning: activeSnapshot?.liveReasoning,
+      liveTrace: activeSnapshot?.liveTrace,
       olderCursor: activeSnapshot?.olderCursor ?? null,
       answerableAskIds,
       dismissableAskIds,
       running: workingRuns.length > 0,
-      workingBots,
+      workingTraceRuns: workingRuns,
       workingRoutine: workingRoutineName(workingRuns),
       memberName: resolveMemberName,
       peerBot: resolveBot,

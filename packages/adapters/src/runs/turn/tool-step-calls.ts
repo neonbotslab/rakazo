@@ -1,7 +1,7 @@
 import type { AgentRunRequest, AgentToolCompletion } from "@rakazo/adapter-kit";
-import type { ToolStepCall } from "@rakazo/contracts";
+import type { ToolCallDetail, ToolStepCall } from "@rakazo/contracts";
 import { MAX_TOOL_RESULT_MODIFIER_NAME_LENGTH, storedImageMimeType } from "@rakazo/contracts";
-import { redactSecrets } from "@rakazo/core";
+import { redactSecrets, TOOL_STEP_CALLS_KEPT } from "@rakazo/core";
 import { getLogger } from "@rakazo/logging";
 import { redactToolArgsForReview } from "../../approvals/auto-review.js";
 import { sanitizeConnectorError } from "../../integrations/connector-safety.js";
@@ -184,6 +184,25 @@ export function keepToolStepResult(
     ...(result === undefined ? {} : { result }),
     ...failed,
   });
+}
+
+export function liveToolCallDetail(
+  reply: ReplyState,
+  executionId: string,
+  startArguments?: () => string | undefined,
+): ToolCallDetail | undefined {
+  const index = reply.toolCalls.findIndex((call) => call.executionId === executionId);
+  if (index < 0 || index >= TOOL_STEP_CALLS_KEPT) return;
+  const kept = reply.toolStepCalls.get(executionId);
+  const args = startArguments && (kept?.arguments ?? startArguments());
+  const result = kept?.result;
+  const failed = kept?.failed;
+  if (args === undefined && result === undefined && !failed) return;
+  return {
+    ...(args !== undefined && { arguments: args }),
+    ...(result !== undefined && { result }),
+    ...(failed && { failed }),
+  };
 }
 
 /**

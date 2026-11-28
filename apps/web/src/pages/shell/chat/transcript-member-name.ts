@@ -1,16 +1,14 @@
 import { t } from "@lingui/core/macro";
-import { botDisplayName } from "@rakazo/core";
+import type { ThreadMessage } from "@rakazo/contracts";
+import type { ThreadItem } from "@rakazo/core";
+import { botDisplayName, isPeerReceiptBlocks } from "@rakazo/core";
 
 type NamedBot = {
   id: string;
   name: string;
 };
 
-/**
- * Name for one group-transcript author. Current members win, then bots still in
- * the space, then archived bots. A bot in none of those keeps its own header.
- * A direct chat has no member roster and no speaker header.
- */
+/** Resolve a group speaker, including archived and deleted bots. */
 export function resolveTranscriptMemberName({
   botId,
   members,
@@ -18,7 +16,6 @@ export function resolveTranscriptMemberName({
   archivedBots,
 }: {
   botId: string | undefined;
-  /** Absent in a 1:1 chat, where the transcript draws no speaker header. */
   members: readonly { botId: string; name: string }[] | undefined;
   bots: readonly NamedBot[];
   archivedBots: readonly NamedBot[];
@@ -32,4 +29,29 @@ export function resolveTranscriptMemberName({
 
 function nameOf(bots: readonly NamedBot[], botId: string): string | undefined {
   return bots.find((bot) => bot.id === botId)?.name;
+}
+
+export function botTurnHeaderIds(items: readonly ThreadItem<ThreadMessage>[]): Set<string> {
+  const replyingBots = new Set<string>();
+  const turnStarts = new Set<string>();
+  let previousBotId: string | undefined;
+  for (const item of items) {
+    if (item.kind !== "message") continue;
+    const { id, role, botId, blocks } = item.message;
+    if (role === "user") previousBotId = undefined;
+    if (
+      role !== "bot" ||
+      !botId ||
+      id.startsWith("subagent:") ||
+      isPeerReceiptBlocks(blocks) ||
+      blocks.some((block) => block.kind === "handoff")
+    ) {
+      continue;
+    }
+    if (!id.startsWith("progress:")) replyingBots.add(botId);
+    if (botId !== previousBotId) turnStarts.add(id);
+    previousBotId = botId;
+  }
+  if (replyingBots.size < 2) turnStarts.clear();
+  return turnStarts;
 }

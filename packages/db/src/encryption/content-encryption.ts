@@ -33,6 +33,8 @@ const EVENT_PAYLOAD_PLAIN_KEYS = new Set([
   "updatedAt",
   "streaming",
   "reasoningChanged",
+  "traceReasoningChanged",
+  "toolStepId",
 ]);
 
 const NO_PLAINTEXT_KEYS = new Set<string>();
@@ -72,7 +74,10 @@ export const ENCRYPTED_MODELS: Record<string, ModelSpec> = {
   },
   Event: {
     table: "events",
-    fields: { payload: { plainKeys: EVENT_PAYLOAD_PLAIN_KEYS } },
+    fields: {
+      payload: { plainKeys: EVENT_PAYLOAD_PLAIN_KEYS },
+      toolCallDetail: { hidden: true, plainKeys: NO_PLAINTEXT_KEYS },
+    },
     space: { column: "spaceId" },
     ownerRelation: "thread",
   },

@@ -21,6 +21,7 @@ import {
   withReplyToolOutcomes,
 } from "../lifecycle/run-progress.js";
 import { applyTool } from "../tools/run-tools.js";
+import { recordTraceTool, recordTraceToolCompletion } from "./run-reply-trace.js";
 import type { RuntimeEvent } from "./run-turn.js";
 import {
   appendToolCompletionAudit,
@@ -42,6 +43,7 @@ import type { ToolRefusal } from "./tool-refusal.js";
 import {
   keepToolStepResult,
   keptToolArguments,
+  liveToolCallDetail,
   saveLatestStepScreenshot,
 } from "./tool-step-calls.js";
 
@@ -57,6 +59,7 @@ function showToolStep(ctx: RunContext, event: RuntimeEvent<"tool">) {
   reply.earlyCompletions?.delete(event.executionId);
   if (ownStep) {
     reply.toolStepCalls.set(event.executionId, {
+      callId: toolStepId(event.executionId),
       arguments: keptToolArguments(event.args, ctx.secrets),
     });
     if (early) keepToolStepResult(reply, early, ctx.secrets);
@@ -77,6 +80,7 @@ export async function onToolCalled(ctx: RunContext, event: RuntimeEvent<"tool">)
   // Preserve event ordering when the throttle still holds recent narration: the
   // client must see that text before the tool call it describes.
   await flushProgress(ctx);
+  const traceTool = recordTraceTool(ctx, event);
   // The call a paused turn resumes on already shows as a step in the reply it saved.
   if (!reply.toolCalls.some((call) => call.executionId === event.executionId))
     showToolStep(ctx, event);
@@ -90,6 +94,9 @@ export async function onToolCalled(ctx: RunContext, event: RuntimeEvent<"tool">)
   if (!heldNote) reply.narrationStatusShowing = false;
   reply.textSinceLastStep = "";
   reply.assistantTurnBreakPending = true;
+  const toolCallDetail = liveToolCallDetail(reply, event.executionId, () =>
+    keptToolArguments(event.args, ctx.secrets),
+  );
   await deps.events.append({
     spaceId: run.spaceId,
     threadId: thread.id,
@@ -99,8 +106,10 @@ export async function onToolCalled(ctx: RunContext, event: RuntimeEvent<"tool">)
     payload: {
       name: event.name,
       executionId: event.executionId,
-      toolStepId: toolStepId(event.executionId),
+      toolStepId: traceTool.id,
+      traceTool,
     },
+    ...(toolCallDetail && { toolCallDetail }),
   });
   await showNarrationStatus(ctx, heldNote);
   tryFlushPendingTools(reply);
@@ -161,21 +170,25 @@ export async function onToolCalled(ctx: RunContext, event: RuntimeEvent<"tool">)
     const outcome = toolCompletionOutcome(completion);
     if (outcome) reply.toolOutcomes.set(event.executionId, outcome);
     keepToolStepResult(reply, completion, ctx.secrets);
-    await appendToolCompletionAudit(deps, audit, completion, ctx.secrets);
-    return isToolPauseResult(result);
-  } catch (error) {
-    reply.toolOutcomes.set(event.executionId, "failed");
+    recordTraceToolCompletion(reply, completion);
     await appendToolCompletionAudit(
       deps,
       audit,
-      {
-        name: event.name,
-        executionId: event.executionId,
-        durationMs: Date.now() - startedAt,
-        error,
-      },
+      completion,
       ctx.secrets,
+      liveToolCallDetail(reply, event.executionId),
     );
+    return isToolPauseResult(result);
+  } catch (error) {
+    reply.toolOutcomes.set(event.executionId, "failed");
+    const completion = {
+      name: event.name,
+      executionId: event.executionId,
+      durationMs: Date.now() - startedAt,
+      error,
+    };
+    recordTraceToolCompletion(reply, completion);
+    await appendToolCompletionAudit(deps, audit, completion, ctx.secrets);
     throw error;
   }
 }

@@ -4,6 +4,8 @@ import { RPCHandler } from "@orpc/server/fetch";
 import type { Actor, MessageBlock } from "@rakazo/contracts";
 import type { PrismaClient } from "@rakazo/db";
 import {
+  appendEvent,
+  appendEventInTransaction,
   asSystem,
   createDb,
   createThreadEvents,
@@ -41,8 +43,29 @@ describePostgres("a reply's kept tool calls (PostgreSQL)", () => {
   let call: (viewer: Actor, path: string, input: Record<string, unknown>) => Promise<Response>;
   const address = `+1555${Math.floor(Math.random() * 9_000_000 + 1_000_000)}`;
 
+  async function createRun() {
+    const { spaceId, userId } = actor;
+    const task = await system.task.create({
+      data: { spaceId, botId, threadId, userId, prompt: "check the notes", status: "running" },
+    });
+    return system.run.create({
+      data: {
+        spaceId,
+        botId,
+        threadId,
+        taskId: task.id,
+        userId,
+        status: "running",
+        trigger: "user",
+        startedAt: new Date(),
+        leaseOwner: "worker-1",
+        leaseFence: 1,
+      },
+    });
+  }
+
   beforeAll(async () => {
-    const db = createDb(databaseUrl!);
+    const db = createDb(databaseUrl!, { encryptContent: true });
     prisma = db.prisma;
     system = asSystem(prisma);
     close = async () => {
@@ -57,7 +80,7 @@ describePostgres("a reply's kept tool calls (PostgreSQL)", () => {
     );
     ({ botId, threadId } = identity);
     actor = { ...identity, email: "fixture@example.test", isDeploymentOwner: false };
-    const { spaceId, userId } = actor;
+    const { spaceId } = actor;
     const memberId = randomUUID();
     const email = `${memberId}@example.test`;
     member = { ...actor, userId: memberId, email };
@@ -70,23 +93,7 @@ describePostgres("a reply's kept tool calls (PostgreSQL)", () => {
       createdAt: new Date(),
     };
     await system.member.create({ data: membership });
-    const task = await system.task.create({
-      data: { spaceId, botId, threadId, userId, prompt: "check the notes", status: "running" },
-    });
-    const run = await system.run.create({
-      data: {
-        spaceId,
-        botId,
-        threadId,
-        taskId: task.id,
-        userId,
-        status: "running",
-        trigger: "user",
-        startedAt: new Date(),
-        leaseOwner: "worker-1",
-        leaseFence: 1,
-      },
-    });
+    const run = await createRun();
     runId = run.id;
     const attempt = await system.attempt.create({
       data: { runId: run.id, fence: 1, status: "running" },
@@ -102,6 +109,7 @@ describePostgres("a reply's kept tool calls (PostgreSQL)", () => {
             count: 1,
             calls: [
               {
+                callId: "retained-call",
                 arguments: '{"command":"cat notes.txt"}',
                 result: PRIVATE_RESULT,
                 image: { artifactId: "screenshot-1" },
@@ -120,7 +128,7 @@ describePostgres("a reply's kept tool calls (PostgreSQL)", () => {
         threadId,
         botId,
         runId: run.id,
-        taskId: task.id,
+        taskId: run.taskId,
         attemptId: attempt.id,
         leaseOwner: "worker-1",
         leaseFence: 1,
@@ -215,6 +223,7 @@ describePostgres("a reply's kept tool calls (PostgreSQL)", () => {
           tool: "shell",
           calls: [
             {
+              callId: "retained-call",
               arguments: '{"command":"cat notes.txt"}',
               result: PRIVATE_RESULT,
               image: { artifactId: "screenshot-1" },
@@ -262,5 +271,102 @@ describePostgres("a reply's kept tool calls (PostgreSQL)", () => {
     expect(response.status).toBe(200);
     const { json } = await response.json();
     expect(json.steps[1]).toBeNull();
+  });
+
+  it("returns the full retained call only to the run starter", async () => {
+    const input = { botId, messageId, stepIndex: 0, callIndex: 0 };
+    const response = await call(actor, "toolCallDetail", input);
+    expect(response.status).toBe(200);
+    expect((await response.json()).json).toEqual({
+      arguments: '{"command":"cat notes.txt"}',
+      result: PRIVATE_RESULT,
+      hasScreenshot: true,
+    });
+    expect((await call(member, "toolCallDetail", input)).status).toBe(403);
+  });
+
+  it("selects a saved call by its stable ID", async () => {
+    const input = { botId, messageId, callId: "retained-call" };
+    const response = await call(actor, "toolCallDetail", input);
+    expect((await response.json()).json).toEqual({
+      arguments: '{"command":"cat notes.txt"}',
+      result: PRIVATE_RESULT,
+      hasScreenshot: true,
+    });
+    const missing = await call(actor, "toolCallDetail", { ...input, callId: "unknown" });
+    expect((await missing.json()).json).toBeNull();
+  });
+
+  it("returns the selected live call only to its run starter", async () => {
+    const run = await createRun();
+    const input = { botId, runId: run.id, callId: "live-call" };
+    const scope = { botId, runId: run.id, threadId, spaceId: actor.spaceId };
+    const asked = { arguments: '{"command":"cat notes.txt"}' };
+    const started = await runAsTenant(actor, () =>
+      appendEvent(prisma, {
+        ...scope,
+        type: "agent.tool.called",
+        payload: { name: "shell", toolStepId: input.callId },
+        toolCallDetail: asked,
+      }),
+    );
+    const running = await call(actor, "liveToolCallDetail", input);
+    expect(running.status).toBe(200);
+    expect((await running.json()).json).toEqual(asked);
+
+    await runAsTenant(actor, () =>
+      prisma.$transaction(async (tx) => {
+        await appendEventInTransaction(tx, {
+          ...scope,
+          type: "agent.tool.completed",
+          payload: { name: "shell", toolStepId: input.callId },
+          toolCallDetail: { result: PRIVATE_RESULT, hasScreenshot: true },
+        });
+        await appendEventInTransaction(tx, {
+          ...scope,
+          type: "agent.tool.completed",
+          payload: { name: "shell", toolStepId: "different-call" },
+          toolCallDetail: { result: "different result" },
+        });
+      }),
+    );
+    const completed = await call(actor, "liveToolCallDetail", input);
+    expect(completed.status).toBe(200);
+    expect((await completed.json()).json).toEqual({
+      ...asked,
+      result: PRIVATE_RESULT,
+      hasScreenshot: true,
+    });
+    const missing = await call(actor, "liveToolCallDetail", { ...input, callId: "unknown" });
+    expect((await missing.json()).json).toBeNull();
+    expect((await call(member, "liveToolCallDetail", input)).status).toBe(403);
+
+    expect(started).not.toHaveProperty("toolCallDetail");
+    const events = await system.event.findMany({ where: { runId: run.id } });
+    expect(events).toHaveLength(3);
+    expect(events.every((event) => !("toolCallDetail" in event))).toBe(true);
+    const raw = await system.$queryRaw<Array<{ detail: string }>>`
+      SELECT "toolCallDetail"::text AS detail FROM events WHERE "runId" = ${run.id}
+    `;
+    expect(raw).toHaveLength(3);
+    for (const { detail } of raw) expect(detail).toContain('"$sealed"');
+    expect(JSON.stringify(raw)).not.toContain("cat notes.txt");
+    expect(JSON.stringify(raw)).not.toContain(PRIVATE);
+
+    await runAsTenant(actor, async () => {
+      await prisma.run.update({ where: { id: run.id }, data: { status: "completed" } });
+      await appendEvent(prisma, {
+        ...scope,
+        type: "agent.tool.completed",
+        payload: { name: "shell", toolStepId: input.callId },
+        toolCallDetail: { result: "late result" },
+      });
+    });
+    const finished = await call(actor, "liveToolCallDetail", input);
+    expect((await finished.json()).json).toBeNull();
+    const remaining = await system.$queryRaw<Array<{ count: bigint }>>`
+      SELECT count(*) FROM events WHERE "runId" = ${run.id} AND "toolCallDetail" IS NOT NULL
+    `;
+    expect(remaining).toEqual([{ count: 0n }]);
   });
 });

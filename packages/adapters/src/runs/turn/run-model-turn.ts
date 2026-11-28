@@ -25,11 +25,12 @@ import { completeRun } from "../lifecycle/run-complete.js";
 import { failRun, handoffEndedTurn, requeueRunAfterDatabaseOutage } from "../lifecycle/run-fail.js";
 import { followUpsOffered, offeredFleetTools } from "../tools/run-tool-selection.js";
 import { applyTool } from "../tools/run-tools.js";
+import { recordTraceToolCompletion } from "./run-reply-trace.js";
 import { consumeRunEvents } from "./run-turn.js";
 import { claimRunSteering } from "./run-turn-images.js";
 import { appendToolCompletionAudit, toolCompletionOutcome } from "./tool-completion-audit.js";
 import { toolResultFingerprint } from "./tool-loop.js";
-import { keepToolStepResult } from "./tool-step-calls.js";
+import { keepToolStepResult, liveToolCallDetail } from "./tool-step-calls.js";
 
 export async function runModelTurn(
   services: RunExecutorServices,
@@ -356,6 +357,7 @@ function modelTurnRequest(
       const outcome = toolCompletionOutcome(completion);
       if (outcome) state.reply.toolOutcomes.set(completion.executionId, outcome);
       keepToolStepResult(state.reply, completion, runSecrets);
+      recordTraceToolCompletion(state.reply, completion);
       const audited = appendToolCompletionAudit(
         deps,
         {
@@ -366,6 +368,7 @@ function modelTurnRequest(
         },
         completion,
         runSecrets,
+        liveToolCallDetail(state.reply, completion.executionId),
       );
       state.toolResults.set(
         completion.executionId,

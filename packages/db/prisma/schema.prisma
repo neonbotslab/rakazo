@@ -1294,17 +1294,18 @@ model PrunedMessageNonce {
 }
 
 model Event {
-  id        String   @id @default(cuid())
-  spaceId   String
-  space     Space    @relation(fields: [spaceId], references: [id], onDelete: Cascade)
-  threadId  String
-  thread    Thread   @relation(fields: [threadId], references: [id], onDelete: Cascade)
-  botId     String
-  seq       Int
-  type      String
-  payload   Json
-  runId     String?
-  createdAt DateTime @default(now())
+  id             String   @id @default(cuid())
+  spaceId        String
+  space          Space    @relation(fields: [spaceId], references: [id], onDelete: Cascade)
+  threadId       String
+  thread         Thread   @relation(fields: [threadId], references: [id], onDelete: Cascade)
+  botId          String
+  seq            Int
+  type           String
+  payload        Json
+  toolCallDetail Json?
+  runId          String?
+  createdAt      DateTime @default(now())
 
   @@unique([threadId, seq])
   @@index([spaceId, createdAt])

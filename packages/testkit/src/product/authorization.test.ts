@@ -371,6 +371,14 @@ describeWithDatabase("API authorization and resource isolation", () => {
       ["threads/get", { groupId: "missing-group" }],
       ["threads/messages", { botId: "missing-bot", before: 1 }],
       ["threads/toolStepPreviews", { botId: "missing-bot", messageId: "missing-message" }],
+      [
+        "threads/toolCallDetail",
+        { botId: "missing-bot", messageId: "missing-message", callId: "missing-call" },
+      ],
+      [
+        "threads/liveToolCallDetail",
+        { botId: "missing-bot", runId: "missing-run", callId: "missing-call" },
+      ],
       ["threads/subscribe", { botId: "missing-bot", cursor: -1 }],
       ["threads/send", { botId: "missing-bot", text: "Nope" }],
       [
@@ -817,6 +825,14 @@ describeWithDatabase("API authorization and resource isolation", () => {
       ["threads/get", { botId: ownerBot.id }],
       ["threads/messages", { botId: ownerBot.id, before: 1 }],
       ["threads/toolStepPreviews", { botId: ownerBot.id, messageId: "missing-message" }],
+      [
+        "threads/toolCallDetail",
+        { botId: ownerBot.id, messageId: "missing-message", callId: "missing-call" },
+      ],
+      [
+        "threads/liveToolCallDetail",
+        { botId: ownerBot.id, runId: "missing-run", callId: "missing-call" },
+      ],
       ["threads/subscribe", { botId: ownerBot.id, cursor: -1 }],
       ["threads/send", { botId: ownerBot.id, text: "intruder message" }],
       ["threads/send", { botId: ownerBot.id, artifactIds: [ownerArtifact.id] }],
@@ -888,6 +904,14 @@ describeWithDatabase("API authorization and resource isolation", () => {
       ["threads/get", { groupId: ownerGroup.id }],
       ["threads/messages", { groupId: ownerGroup.id, before: 1 }],
       ["threads/toolStepPreviews", { groupId: ownerGroup.id, messageId: "missing-message" }],
+      [
+        "threads/toolCallDetail",
+        { groupId: ownerGroup.id, messageId: "missing-message", callId: "missing-call" },
+      ],
+      [
+        "threads/liveToolCallDetail",
+        { groupId: ownerGroup.id, runId: "missing-run", callId: "missing-call" },
+      ],
       ["threads/subscribe", { groupId: ownerGroup.id, cursor: -1 }],
       ["threads/send", { groupId: ownerGroup.id, text: "intruder group message" }],
       ["threads/stop", { groupId: ownerGroup.id }],

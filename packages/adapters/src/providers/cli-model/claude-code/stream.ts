@@ -384,7 +384,7 @@ export function streamClaudeCode(
       files = await mkdtemp(join(tmpdir(), "rakazo-claude-code-request-"));
       const cwd = join(files, "cwd");
       await mkdir(cwd, { mode: 0o700 });
-      await checkClaudeCode(cwd, options.signal);
+      const versionVerified = await checkClaudeCode(cwd, options.signal);
       const systemFile = join(files, "system.md");
       await writeFile(systemFile, system, { mode: 0o600 });
       const args = [
@@ -440,7 +440,10 @@ export function streamClaudeCode(
         );
         args.push("--mcp-config", config);
       }
-      if (model.reasoning && options.reasoning) args.push("--effort", EFFORT[options.reasoning]);
+      if (model.reasoning) {
+        if (versionVerified) args.push("--thinking-display", "summarized");
+        if (options.reasoning) args.push("--effort", EFFORT[options.reasoning]);
+      }
       const maxTokens = options.maxTokens ?? model.maxTokens;
       const config = join(files, "config");
       await mkdir(config, { mode: 0o700 });

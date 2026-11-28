@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import type { AgentToolCompletion } from "@rakazo/adapter-kit";
+import type { ToolCallDetail } from "@rakazo/contracts";
 import { MAX_TOOL_RESULT_MODIFIER_NAME_LENGTH } from "@rakazo/contracts";
 import { redactSecrets } from "@rakazo/core";
 import type { ThreadEvents } from "@rakazo/db";
@@ -67,9 +68,6 @@ export function toolCompletionAuditPayload(
   completion: AgentToolCompletion,
   secrets: string[] = [],
 ): Record<string, unknown> {
-  const durationMs = Number.isFinite(completion.durationMs)
-    ? Math.max(0, Math.round(completion.durationMs))
-    : 0;
   const raw = completion.rawResult === undefined ? completion.result : completion.rawResult;
   const error = completion.error === undefined ? toolResultError(raw) : completion.error;
   const outcome = toolCompletionOutcome(completion);
@@ -77,7 +75,7 @@ export function toolCompletionAuditPayload(
     name: redactSecrets(completion.name, secrets),
     executionId: redactSecrets(completion.executionId, secrets),
     toolStepId: toolStepId(completion.executionId),
-    durationMs,
+    durationMs: toolCompletionDurationMs(completion),
     outcome: outcome === "failed" ? "error" : (outcome ?? "paused"),
   };
   if (error !== undefined) {
@@ -115,11 +113,18 @@ export function toolCompletionAuditPayload(
   return payload;
 }
 
+export function toolCompletionDurationMs(completion: AgentToolCompletion): number {
+  return Number.isFinite(completion.durationMs)
+    ? Math.max(0, Math.round(completion.durationMs))
+    : 0;
+}
+
 export async function appendToolCompletionAudit(
   deps: { events: Pick<ThreadEvents, "append"> },
   target: { spaceId: string; threadId: string; botId: string; runId: string },
   completion: AgentToolCompletion,
   secrets: string[] = [],
+  toolCallDetail?: ToolCallDetail,
 ): Promise<void> {
   const payload = toolCompletionAuditPayload(completion, secrets);
   getLogger().info("agent.tool.completed", {
@@ -138,7 +143,8 @@ export async function appendToolCompletionAudit(
       botId: target.botId,
       runId: target.runId,
       type: "agent.tool.completed",
-      payload,
+      payload: { ...payload, traceCall: true },
+      ...(toolCallDetail && { toolCallDetail }),
     });
   } catch (error) {
     // A tool that finishes after its run was cancelled has no history to join.

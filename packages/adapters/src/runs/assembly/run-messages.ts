@@ -4,6 +4,7 @@ import {
   callIdFromClientNonce,
   isBackgroundRunTrigger,
   redactSecrets,
+  sliceWellFormed,
   splitToolHistory,
 } from "@rakazo/core";
 import type { Prisma, RunLease } from "@rakazo/db";
@@ -69,6 +70,19 @@ export function redactBlocks(blocks: MessageBlock[], secrets: string[]): Message
     if (block.kind === "steps") {
       return {
         ...block,
+        ...(block.trace && {
+          trace: block.trace.map((entry) =>
+            entry.kind === "tool"
+              ? {
+                  ...entry,
+                  label: sliceWellFormed(redactSecrets(entry.label, secrets), 256),
+                  ...(entry.name && {
+                    name: sliceWellFormed(redactSecrets(entry.name, secrets), 256),
+                  }),
+                }
+              : entry,
+          ),
+        }),
         steps: (block.steps as HistoryToolStep[]).map((step) => ({
           ...step,
           label: redactSecrets(step.label, secrets),

@@ -80,7 +80,11 @@ function message(
   };
 }
 
-function renderTranscript(messages: ThreadMessage[], roster: Roster) {
+function renderTranscript(
+  messages: ThreadMessage[],
+  roster: Roster,
+  workingTraceRuns?: { id: string; botId: string }[],
+) {
   const memberName = (botId: string | undefined) =>
     resolveTranscriptMemberName({ botId, ...roster });
   const peerBot: ComponentProps<typeof Transcript>["peerBot"] = (botId) => {
@@ -104,8 +108,8 @@ function renderTranscript(messages: ThreadMessage[], roster: Roster) {
     loadingOlder: false,
     answerableAskIds: new Set<string>(),
     dismissableAskIds: new Set<string>(),
-    running: false,
-    workingBots: [],
+    running: Boolean(workingTraceRuns?.length),
+    workingTraceRuns,
     onLoadOlder: vi.fn(),
     onOpenBot: vi.fn(),
     onAnswer: vi.fn(),
@@ -143,6 +147,13 @@ function header(messageId: string): string | null {
   return text || null;
 }
 
+function botName(messageId: string): string | null {
+  return (
+    container.querySelector(`[data-message-id="${messageId}"] [data-testid="bot-sender-name"]`)
+      ?.textContent ?? null
+  );
+}
+
 function handoffLine(messageId: string): string {
   const row = container.querySelector(`[data-message-id="${messageId}"]`);
   const line = [...(row?.querySelectorAll("span") ?? [])].find((span) =>
@@ -160,7 +171,7 @@ function replyLine(messageId: string): string {
   );
 }
 
-it("group-removed-member-keeps-author-label", () => {
+it("keeps handoff and reply attribution in context", () => {
   renderTranscript(
     [
       message("g1", G1, [{ kind: "text", text: "Hello" }]),
@@ -184,26 +195,22 @@ it("group-removed-member-keeps-author-label", () => {
   );
 
   expect({
-    g1: header("g1"),
     handoff: handoffLine("hand"),
-    g2: header("g2"),
-    gone: header("gone"),
     reply: replyLine("reply"),
-    plain: header("plain"),
+    handoffName: botName("hand"),
+    plainName: botName("plain"),
   }).toEqual({
-    g1: "G1",
     handoff: "↪ G2 ← G1",
-    g2: "G2",
-    gone: "Deleted bot",
     reply: expect.stringContaining("Deleted bot: Gone"),
-    plain: null,
+    handoffName: null,
+    plainName: null,
   });
   expect(container.querySelector(`[data-message-id="plain"]`)?.textContent).not.toContain(
     "Deleted bot",
   );
 });
 
-it("group-removed-member-keeps-author-label for an archived bot", () => {
+it("keeps an archived bot’s name in a quoted reply", () => {
   renderTranscript(
     [
       message("old", ARCHIVED, [{ kind: "text", text: "Note" }]),
@@ -219,44 +226,15 @@ it("group-removed-member-keeps-author-label for an archived bot", () => {
     },
   );
 
-  expect({ header: header("old"), reply: replyLine("reply") }).toEqual({
-    header: "G4",
-    reply: expect.stringContaining("G4: Note"),
-  });
+  expect(replyLine("reply")).toContain("G4: Note");
 });
 
-it("group-removed-member-keeps-author-label stays off a direct chat", () => {
-  renderTranscript([message("direct", G1, [{ kind: "text", text: "Hello" }])], {
-    members: undefined,
-    bots: [{ id: G1, name: "Atlas" }],
-    archivedBots: [{ id: G1, name: "Atlas" }],
-  });
-
-  expect(header("direct")).toBeNull();
-  expect(container.querySelector(`[data-message-id="direct"]`)?.textContent).toContain("Hello");
-  expect(container.querySelector(`[data-message-id="direct"]`)?.textContent).not.toContain("Atlas");
-  expect(container.querySelector(`[data-message-id="direct"]`)?.textContent).not.toContain(
-    "Deleted bot",
-  );
-});
-
-it("group-removed-member-keeps-author-label prefers the current member", () => {
-  renderTranscript([message("g1", G1, [{ kind: "text", text: "Hello" }])], {
-    members: [{ botId: G1, name: "G1" }],
-    bots: [{ id: G1, name: "Stale G1" }],
-    archivedBots: [{ id: G1, name: "Older G1" }],
-  });
-
-  expect(header("g1")).toBe("G1");
-  expect(container.querySelector(`[data-message-id="g1"]`)?.textContent).not.toContain("Stale");
-  expect(container.querySelector(`[data-message-id="g1"]`)?.textContent).not.toContain("Older");
-});
-
-it("labels each consecutive sender once and starts over after a time separator", () => {
+it("names each new bot speaker after a person or another bot", () => {
   const text = [{ kind: "text", text: "A message" }] as const;
   const member = { id: "member", name: "A member" };
   renderTranscript(
     [
+      message("start", undefined, [...text], { role: "user", author: member }),
       message("first", G1, [...text]),
       message("follow-up", G1, [...text]),
       message("other-bot", G2, [...text]),
@@ -264,6 +242,7 @@ it("labels each consecutive sender once and starts over after a time separator",
       message("later", G1, [...text], { createdAt: "2026-11-12T12:00:00.000Z" }),
       message("member", undefined, [...text], { role: "user", author: member }),
       message("member-follow-up", undefined, [...text], { role: "user", author: member }),
+      message("after-member", G1, [...text]),
     ],
     {
       members: [
@@ -275,7 +254,49 @@ it("labels each consecutive sender once and starts over after a time separator",
     },
   );
 
-  expect(
-    ["first", "follow-up", "other-bot", "back", "later", "member", "member-follow-up"].map(header),
-  ).toEqual(["G1", null, "G2", "G1", "G1", "A member", null]);
+  expect(["first", "follow-up", "other-bot", "back", "later", "after-member"].map(botName)).toEqual(
+    ["G1", null, "G2", "G1", null, "G1"],
+  );
+  expect(["member", "member-follow-up"].map(header)).toEqual(["A member", null]);
+});
+
+it("hides the bot name when another roster member has started working but has yet to reply", () => {
+  renderTranscript(
+    [
+      message("question", undefined, [{ kind: "text", text: "Hello" }], { role: "user" }),
+      message("answer", G1, [{ kind: "text", text: "Hi" }]),
+    ],
+    {
+      members: [
+        { botId: G1, name: "G1" },
+        { botId: G2, name: "G2" },
+      ],
+      bots: [],
+      archivedBots: [],
+    },
+    [{ id: "next", botId: G2 }],
+  );
+
+  expect(botName("answer")).toBeNull();
+  expect(botName("progress:next")).toBeNull();
+});
+
+it("names the bot above its live trace when both bots have already replied", () => {
+  renderTranscript(
+    [
+      message("first", G2, [{ kind: "text", text: "Already replied" }]),
+      message("answer", G1, [{ kind: "text", text: "I replied too" }]),
+    ],
+    {
+      members: [
+        { botId: G1, name: "G1" },
+        { botId: G2, name: "G2" },
+      ],
+      bots: [],
+      archivedBots: [],
+    },
+    [{ id: "next", botId: G2 }],
+  );
+
+  expect(botName("progress:next")).toBe("G2");
 });
