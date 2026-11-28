@@ -1,10 +1,10 @@
 // @vitest-environment jsdom
 
-import { act } from "react";
+import { act, useState } from "react";
 import type { Root } from "react-dom/client";
 import { createRoot } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import { ToolResult } from "./ToolResult";
+import { ToolResult, ToolResultControls } from "./ToolResult";
 
 let container: HTMLDivElement;
 let root: Root;
@@ -34,24 +34,34 @@ async function clickButton(label: string) {
   return button;
 }
 
+function ResultWithControls({ text }: { text: string }) {
+  const [raw, setRaw] = useState(false);
+  return (
+    <>
+      <ToolResult text={text} raw={raw} />
+      <ToolResultControls text={text} raw={raw} onRawChange={setRaw} />
+    </>
+  );
+}
+
 async function render(text: string) {
-  await act(async () => root.render(<ToolResult text={text} />));
+  await act(async () => root.render(<ResultWithControls text={text} />));
 }
 
 it("opens nested groups one level at a time", async () => {
   await render('{"inputSchema":{"properties":{"command":"example"},"required":["command"]}}');
   expect(container.textContent).not.toContain("Properties");
 
-  const schema = await clickButton("Input schema 2 fields");
+  const schema = await clickButton("2 fields");
   expect(schema.getAttribute("aria-expanded")).toBe("true");
   const panelId = schema.getAttribute("aria-controls");
   expect(panelId && document.getElementById(panelId)?.hidden).toBe(false);
   expect(container.textContent).toContain("Required");
   expect(container.textContent).not.toContain("example");
 
-  await clickButton("Properties 1 field");
+  await clickButton("1 field");
   expect(container.textContent).toContain("example");
-  await clickButton("Input schema 2 fields");
+  await clickButton("2 fields");
   expect(container.textContent).not.toContain("Properties");
 });
 
@@ -79,18 +89,18 @@ it("shows no text disclosure when the measured content fits", async () => {
 it("restores the expanded fields after showing the exact raw text", async () => {
   const text = '  {"inputSchema":{"valid":true,"optional":null,"required":false}}\n';
   await render(text);
-  const schema = await clickButton("Input schema 3 fields");
+  const schema = await clickButton("3 fields");
   expect(container.textContent).toContain("Yes");
   expect(container.textContent).toContain("None");
   expect(container.textContent).toContain("No");
 
   await clickButton("Show raw");
-  expect(findButton("Input schema 3 fields")).toBeUndefined();
+  expect(findButton("3 fields")).toBeUndefined();
   expect(container.querySelector("pre")?.textContent).toBe(text);
 
   await clickButton("Show fields");
   expect(container.querySelector("pre")).toBeNull();
-  expect(findButton("Input schema 3 fields")).toBe(schema);
+  expect(findButton("3 fields")).toBe(schema);
   expect(schema.getAttribute("aria-expanded")).toBe("true");
 });
 

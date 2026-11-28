@@ -62,7 +62,9 @@ const traces: Record<string, ReplyTraceEntry[]> = {
   "finished-open": [before, mine, dana, between, wednesday, after],
   "tool-open": [mine, dana],
   "tools-only": [mine, dana, wednesday],
-  "result-open": [tool("process-tool", "Loaded process tool", 1_200)],
+  "result-open": [
+    tool("process-tool", "Connectors load tool", 1_200, { name: "connectors_load_tool" }),
+  ],
   "group-open": [wednesday, repeated, repeat],
   "error-open": [failed, dana],
   long: [long, mine, dana, between, wednesday, repeated, repeat, after],

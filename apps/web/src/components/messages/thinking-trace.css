@@ -2,12 +2,15 @@
   --trace-width: 33rem;
   --trace-icon: calc(var(--spacing) * 3.5);
   --touch: calc(var(--spacing) * 12);
+  --space-1: var(--spacing);
+  --space-2: calc(var(--spacing) * 2);
   --space-3: calc(var(--spacing) * 3);
   --space-8: calc(var(--spacing) * 8);
   --tool-row: var(--touch);
   --tool-center: calc(var(--tool-row) / 2);
   --result-lines: 3;
   --result-control-size: var(--touch);
+  --result-raw-height: 16rem;
   --section-border: var(--border);
   --trace-rail-width: thin;
   --trace-rail-offset: calc(var(--trace-icon) / -2);
@@ -113,6 +116,19 @@
 .trace-result-control {
   min-block-size: var(--result-control-size);
   min-inline-size: var(--result-control-size);
+  padding-inline: var(--space-1);
+}
+
+.trace-result-group {
+  --trace-icon: var(--space-3);
+  gap: var(--space-1);
+}
+
+.trace-result-raw {
+  max-block-size: var(--result-raw-height);
+  overflow: auto;
+  border: thin solid var(--section-border);
+  padding: var(--space-2);
 }
 
 .trace-result-children {

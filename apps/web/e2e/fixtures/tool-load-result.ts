@@ -4,6 +4,7 @@ export const procStartResult = JSON.stringify(
     name: "proc_start",
     description:
       "Start a background process and return its process ID. The command keeps running after this request returns. Use the process ID to read recent output, check whether the command is still running, or stop it.",
+    readOnly: false,
     inputSchema: {
       type: "object",
       properties: {

@@ -12,41 +12,59 @@ type ResultGroupValue = Extract<ResultValue, { kind: "object" | "array" }>;
 type ResultScalar = Extract<ResultValue, { kind: "scalar" }>["value"];
 
 const controlClass =
-  "trace-result-control w-fit rounded-sm text-label text-muted-foreground underline hover:text-foreground focus-visible:outline-2 focus-visible:outline-ring";
+  "trace-result-control w-fit rounded-sm text-label text-link hover:bg-accent active:bg-accent focus-visible:outline-2 focus-visible:outline-ring";
 
-export function ToolResult({ text }: { text: string }) {
-  const { t } = useLingui();
-  const [raw, setRaw] = useState(false);
-  const [copied, copy, copyFailed, resetCopy, copyFailedText] = useCopyText();
+export function ToolResult({ text, raw }: { text: string; raw: boolean }) {
   const result = useMemo(() => parseToolResult(text), [text]);
-
   return (
-    <div className="min-w-0 wrap-anywhere text-foreground">
-      <div hidden={raw}>
+    <>
+      <div className="min-w-0" hidden={raw}>
         <ResultLevel value={result} />
       </div>
       {raw ? (
-        <pre dir="auto" className="whitespace-pre-wrap font-mono text-label">
+        <pre
+          dir="auto"
+          className="trace-result-raw rounded-sm bg-dialog whitespace-pre-wrap font-mono text-label"
+        >
           {text}
         </pre>
       ) : null}
-      <div className="flex flex-wrap items-center gap-x-3">
-        <button
-          type="button"
-          className={controlClass}
-          onClick={() => {
-            resetCopy();
-            setRaw(!raw);
-          }}
-        >
-          {raw ? t`Show fields` : t`Show raw`}
-        </button>
-        {raw ? (
+    </>
+  );
+}
+
+export function ToolResultControls({
+  text,
+  raw,
+  onRawChange,
+}: {
+  text: string;
+  raw: boolean;
+  onRawChange: (raw: boolean) => void;
+}) {
+  const { t } = useLingui();
+  const [copied, copy, copyFailed, resetCopy, copyFailedText] = useCopyText();
+
+  return (
+    <>
+      <button
+        type="button"
+        className={controlClass}
+        onClick={() => {
+          resetCopy();
+          onRawChange(!raw);
+        }}
+      >
+        {raw ? t`Show fields` : t`Show raw`}
+      </button>
+      {raw ? (
+        <>
+          <span aria-hidden className="size-0.5 shrink-0 rounded-full bg-current" />
           <button type="button" className={controlClass} onClick={() => copy(text)}>
             {copied ? t`Copied` : t`Copy`}
           </button>
-        ) : null}
-      </div>
+        </>
+      ) : null}
       {raw && copyFailed ? (
         <CopyTextFallback
           open
@@ -57,7 +75,7 @@ export function ToolResult({ text }: { text: string }) {
           label={t`Copy text`}
         />
       ) : null}
-    </div>
+    </>
   );
 }
 
@@ -132,32 +150,29 @@ function EmptyGroup({ value }: { value: ResultGroupValue }) {
 function ResultGroup({ label, value }: { label: string; value: ResultGroupValue }) {
   const [open, setOpen] = useState(false);
   const id = useId();
+  const labelId = `${id}-label`;
+  const countId = `${id}-count`;
   const count = useGroupCount(value);
 
   return (
-    <div>
-      <dt>
+    <div className="trace-field gap-x-3">
+      <dt id={labelId} dir="auto" className="self-center text-muted-foreground">
+        {label}
+      </dt>
+      <dd className="min-w-0">
         <button
           type="button"
-          className="trace-trigger trace-result-control flex w-full min-w-0 items-center justify-between gap-2 rounded-sm text-start text-muted-foreground hover:bg-background/55 hover:text-foreground focus-visible:outline-2 focus-visible:outline-ring focus-visible:-outline-offset-2"
+          className={cn(controlClass, "trace-trigger trace-result-group -ms-1 flex items-center")}
+          aria-labelledby={`${labelId} ${countId}`}
           aria-expanded={open}
           aria-controls={id}
           onClick={() => setOpen(!open)}
         >
-          <span className="min-w-0">
-            <bdi>{label}</bdi>{" "}
-            <span className="whitespace-nowrap text-label text-muted-foreground">
-              <span
-                aria-hidden
-                className="me-1 inline-block size-0.5 rounded-full bg-current align-middle"
-              />
-              {count}
-            </span>
-          </span>
+          <span id={countId}>{count}</span>
           <ChevronRight className="trace-chevron shrink-0" strokeWidth={1.5} aria-hidden />
         </button>
-      </dt>
-      <dd className="trace-result-children" id={id} hidden={!open}>
+      </dd>
+      <dd className="trace-result-children col-span-full" id={id} hidden={!open}>
         {open ? <ResultLevel value={value} /> : null}
       </dd>
     </div>

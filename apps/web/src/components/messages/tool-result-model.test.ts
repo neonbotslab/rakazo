@@ -66,6 +66,7 @@ it("formats the tool-load result as fields with a nested input schema", () => {
       { label: "Id", value: { kind: "scalar", value: "warden.proc_start" } },
       { label: "Name", value: { kind: "scalar", value: "proc_start" } },
       { label: "Description", value: { kind: "scalar" } },
+      { label: "Read only", value: { kind: "scalar", value: false } },
       {
         label: "Input schema",
         value: {

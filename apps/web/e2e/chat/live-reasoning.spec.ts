@@ -71,6 +71,43 @@ async function expectTraceAligned(page: Page, trace: Locator) {
   }
 }
 
+async function openProcessToolResult(page: Page, theme: string) {
+  await page.goto(`${fixture}?state=result-open&theme=${theme}`);
+  const trace = page.getByTestId("thinking-trace");
+  await expect(trace).toBeVisible();
+  const transcript = page.getByTestId("transcript");
+  const closedScrollWidth = await transcript.evaluate((element) => element.scrollWidth);
+  await trace.getByRole("button", { name: "Worked for 42s" }).click();
+  await trace.getByRole("button", { name: /^Looked up a tool's settings/ }).click();
+  await expect(trace.getByText("Read only", { exact: true })).toBeVisible();
+  await expect(trace.getByText("No", { exact: true })).toBeVisible();
+  return { trace, transcript, closedScrollWidth };
+}
+
+async function expectResultGroupLayout(
+  group: Locator,
+  label: Locator,
+  siblingValue: Locator,
+  stacked: boolean,
+) {
+  const count = (await group.getByText("4 fields", { exact: true }).boundingBox())!;
+  const labelBox = (await label.boundingBox())!;
+  const valueBox = (await siblingValue.boundingBox())!;
+  const chevron = (await group.locator("svg").boundingBox())!;
+  const button = (await group.boundingBox())!;
+  expect(count.x).toBe(valueBox.x);
+  if (stacked) {
+    expect(count.x).toBe(labelBox.x);
+    expect(count.y).toBeGreaterThanOrEqual(labelBox.y + labelBox.height);
+  } else {
+    expect(count.x).toBeGreaterThan(labelBox.x + labelBox.width);
+    expect(count.y + count.height / 2).toBeCloseTo(labelBox.y + labelBox.height / 2, 0);
+  }
+  expect(chevron.width).toBe(12);
+  expect(chevron.x - (count.x + count.width)).toBeCloseTo(4, 0);
+  expect(button.x + button.width - (chevron.x + chevron.width)).toBeCloseTo(4, 0);
+}
+
 test("live reasoning stays under one disclosure as the turn starts", async ({ page }) => {
   await page.goto(fixture);
   const summary = page.getByRole("button", { name: "Thinking…" });
@@ -166,16 +203,24 @@ test("reads a tool result as fields, one schema level, or raw text", async ({ pa
     const height = width === 390 ? 844 : 1000;
     for (const theme of ["light", "dark"]) {
       await page.setViewportSize({ width, height });
-      await page.goto(`${fixture}?state=result-open&theme=${theme}`);
-      const trace = page.getByTestId("thinking-trace");
-      await expect(trace).toBeVisible();
-      const transcript = page.getByTestId("transcript");
-      const closedScrollWidth = await transcript.evaluate((element) => element.scrollWidth);
-      await trace.getByRole("button", { name: "Worked for 42s" }).click();
-      await trace.getByRole("button", { name: /Loaded process tool/ }).click();
+      const { trace, transcript, closedScrollWidth } = await openProcessToolResult(page, theme);
       const schema = trace.getByRole("button", { name: "Input schema 4 fields" });
       await expect(schema).toHaveAttribute("aria-expanded", "false");
       await expect(trace.getByText("Properties", { exact: true })).toHaveCount(0);
+      await expectResultGroupLayout(
+        schema,
+        trace.getByText("Input schema", { exact: true }),
+        trace.getByText("warden.proc_start", { exact: true }),
+        width === 390,
+      );
+      const footer = trace.locator("footer");
+      const showRaw = footer.getByRole("button", { name: "Show raw" });
+      const status = (await footer.getByText("Succeeded", { exact: true }).boundingBox())!;
+      await expect(footer.getByText("Took 1.2s", { exact: true })).toBeVisible();
+      const showRawBox = (await showRaw.boundingBox())!;
+      expect(showRawBox.height).toBe(32);
+      expect(showRawBox.x).toBeGreaterThan(status.x + status.width);
+      expect(showRawBox.y + showRawBox.height / 2).toBe(status.y + status.height / 2);
 
       const capture = async (mode: string) => {
         const extraHeight = await transcript.evaluate(
@@ -198,9 +243,13 @@ test("reads a tool result as fields, one schema level, or raw text", async ({ pa
 
       await capture("fields");
       await schema.click();
-      await expect(trace.getByRole("button", { name: "Properties 4 fields" })).toHaveAttribute(
-        "aria-expanded",
-        "false",
+      const properties = trace.getByRole("button", { name: "Properties 4 fields" });
+      await expect(properties).toHaveAttribute("aria-expanded", "false");
+      await expectResultGroupLayout(
+        properties,
+        trace.getByText("Properties", { exact: true }),
+        trace.getByText("object", { exact: true }),
+        width === 390,
       );
       await expect(trace.getByText("agent, command", { exact: true })).toBeVisible();
       await expect(trace.getByText("Command to start.", { exact: true })).toHaveCount(0);
@@ -213,18 +262,53 @@ test("reads a tool result as fields, one schema level, or raw text", async ({ pa
       }
       await capture("schema");
 
-      const showRaw = trace.getByRole("button", { name: "Show raw" });
-      expect((await showRaw.boundingBox())!.height).toBe(32);
       await showRaw.click();
-      await expect(trace.getByRole("button", { name: "Copy", exact: true })).toBeVisible();
+      await expect(footer.getByRole("button", { name: "Copy", exact: true })).toBeVisible();
       const raw = trace.locator("pre");
       await expect(raw).toBeVisible();
       expect(await raw.textContent()).toBe(procStartResult);
+      expect(await raw.evaluate((node) => node.scrollHeight - node.clientHeight)).toBeGreaterThan(
+        0,
+      );
+      expect((await raw.boundingBox())!.height).toBe(256);
       await expect(schema).toBeHidden();
       await capture("raw");
-      await trace.getByRole("button", { name: "Show fields" }).click();
+      await footer.getByRole("button", { name: "Show fields" }).click();
       await expect(schema).toHaveAttribute("aria-expanded", "true");
     }
+  }
+});
+
+test("keeps result controls tappable on a phone", async ({ browser }, testInfo) => {
+  const context = await browser.newContext({
+    viewport: { width: 390, height: 844 },
+    hasTouch: true,
+  });
+  try {
+    const page = await context.newPage();
+    await interceptDetails(page, []);
+    for (const theme of ["light", "dark"]) {
+      await page.setViewportSize({ width: 390, height: 844 });
+      const { trace, transcript, closedScrollWidth } = await openProcessToolResult(page, theme);
+      const controls = [
+        trace.getByRole("button", { name: "Show more" }),
+        trace.getByRole("button", { name: "Input schema 4 fields" }),
+        trace.locator("footer").getByRole("button", { name: "Show raw" }),
+      ];
+      for (const control of controls) {
+        await expect(control).toBeVisible();
+        expect((await control.boundingBox())!.height).toBe(48);
+      }
+      const extraHeight = await transcript.evaluate(
+        (element) => element.scrollHeight - element.clientHeight,
+      );
+      if (extraHeight > 0) await page.setViewportSize({ width: 390, height: 844 + extraHeight });
+      await expect(transcript).toHaveJSProperty("scrollWidth", closedScrollWidth);
+      await expectTraceAligned(page, trace);
+      await captureScreenshot(page, testInfo, `result-fields-390-${theme}-coarse`);
+    }
+  } finally {
+    await context.close();
   }
 });
 
