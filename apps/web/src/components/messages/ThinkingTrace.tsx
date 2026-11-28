@@ -8,6 +8,7 @@ import { useId, useState } from "react";
 import type { ArtifactTarget } from "../../lib/pages/artifact-open";
 import { useSpaceQueries } from "../../lib/query/query";
 import { Shimmer } from "../ai/primitives";
+import { ToolResult, ToolResultControls } from "./ToolResult";
 import type { TraceCall, TraceEntry } from "./thinking-trace-model";
 import {
   callDuration,
@@ -17,6 +18,7 @@ import {
   readableName,
   traceRows,
 } from "./thinking-trace-model";
+import { retainedToolResult } from "./tool-result-model";
 import "./thinking-trace.css";
 
 type DetailSource = {
@@ -54,6 +56,11 @@ const actions = {
     msg`Couldn't find an app action`,
   ],
   service_call: [msg`Using an app`, msg`Used an app`, msg`Couldn't use the app`],
+  load_tool: [
+    msg`Looking up a tool's settings`,
+    msg`Looked up a tool's settings`,
+    msg`Couldn't look up a tool's settings`,
+  ],
   ask_user: [msg`Waiting for an answer`, msg`Asked a question`, msg`Couldn't ask the question`],
 } as const;
 type ActionName = keyof typeof actions;
@@ -70,7 +77,8 @@ function personFrom(detail?: ToolCallDetail | null): string | undefined {
 function useToolLabel(call: TraceCall, subject?: string) {
   const { i18n, t } = useLingui();
   const { outcome } = call;
-  const action = call.name?.toLowerCase().replaceAll(" ", "_");
+  const toolName = call.name?.toLowerCase().replaceAll(" ", "_");
+  const action = toolName?.endsWith("_load_tool") ? "load_tool" : toolName;
   const known =
     action && Object.hasOwn(actions, action) ? actions[action as ActionName] : undefined;
   if (action === "list_calendar_events" && subject) {
@@ -255,7 +263,7 @@ function ToolRow({ calls, source }: { calls: TraceCall[]; source?: DetailSource 
     ? undefined
     : calls.reduce((total, call) => total + (call.durationMs ?? 0), 0);
   return (
-    <li className="trace-node pb-2 last:pb-0">
+    <li className="trace-node trace-tool-node pb-2 last:pb-0">
       <button
         type="button"
         className={cn(triggerClass, "trace-tool-trigger pe-2")}
@@ -267,7 +275,7 @@ function ToolRow({ calls, source }: { calls: TraceCall[]; source?: DetailSource 
         <span
           dir="auto"
           className={cn(
-            "min-w-0 wrap-anywhere",
+            "min-w-0 truncate",
             outcome === "running" && "text-foreground",
             outcome === "failed" && "text-destructive",
           )}
@@ -360,8 +368,6 @@ function Subcall({
   );
 }
 
-const photoMarker = "[image not kept]";
-
 function CallDetails({
   call,
   detail,
@@ -374,11 +380,11 @@ function CallDetails({
   error: boolean;
 }) {
   const { i18n, t } = useLingui();
+  const [raw, setRaw] = useState(false);
   const outcome = detail?.failed ? "failed" : call.outcome;
   const duration = call.durationMs === undefined ? undefined : callDuration(call.durationMs);
-  const image = Boolean(detail?.hasScreenshot || detail?.result?.includes(photoMarker));
-  const result =
-    outcome === "failed" ? detail?.result : detail?.result?.split(photoMarker).join("").trim();
+  const { text: result, image } = retainedToolResult(detail?.result, detail?.hasScreenshot);
+  const readableResult = outcome !== "failed" && result;
   const args = detail?.arguments ? detailFields(detail.arguments) : [];
   const empty = pending
     ? t`Loading details…`
@@ -415,20 +421,19 @@ function CallDetails({
               </p>
             ) : null}
           </>
-        ) : outcome === "running" && !result ? (
+        ) : outcome === "running" && !result && !image ? (
           <p className="text-muted-foreground">{t`Waiting for the result…`}</p>
+        ) : readableResult ? (
+          <ToolResult text={readableResult} raw={raw} />
         ) : (
-          <>
-            {result ? <DetailFields rows={detailFields(result)} /> : null}
-            {image ? (
-              <p>{detail?.hasScreenshot ? t`Took a screenshot (not shown)` : t`Image not shown`}</p>
-            ) : null}
-            {!result && !image ? <p className="text-muted-foreground">{empty}</p> : null}
-          </>
+          !image && <p className="text-muted-foreground">{empty}</p>
         )}
+        {image ? (
+          <p>{image === "screenshot" ? t`Took a screenshot (not shown)` : t`Image not shown`}</p>
+        ) : null}
       </section>
-      {duration || outcome ? (
-        <footer className="flex flex-wrap items-center gap-x-3 gap-y-1 border-border border-t pt-2 text-label text-muted-foreground">
+      {duration || outcome || readableResult ? (
+        <footer className="flex flex-wrap items-center gap-x-2 gap-y-1 border-border border-t pt-2 text-label text-muted-foreground">
           {duration ? <span className="whitespace-nowrap">{t`Took ${duration}`}</span> : null}
           {outcome ? (
             <span className="inline-flex items-center gap-1">
@@ -444,6 +449,14 @@ function CallDetails({
               />
               {i18n._(outcomeLabels[outcome])}
             </span>
+          ) : null}
+          {readableResult ? (
+            <div className="inline-flex min-w-0 items-center gap-1">
+              {duration || outcome ? (
+                <span aria-hidden className="size-0.5 shrink-0 rounded-full bg-current" />
+              ) : null}
+              <ToolResultControls text={readableResult} raw={raw} onRawChange={setRaw} />
+            </div>
           ) : null}
         </footer>
       ) : null}

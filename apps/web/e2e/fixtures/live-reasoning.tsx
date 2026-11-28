@@ -61,6 +61,10 @@ const traces: Record<string, ReplyTraceEntry[]> = {
   "finished-closed": [before, mine, dana, between, wednesday, after],
   "finished-open": [before, mine, dana, between, wednesday, after],
   "tool-open": [mine, dana],
+  "tools-only": [mine, dana, wednesday],
+  "result-open": [
+    tool("process-tool", "Connectors load tool", 1_200, { name: "connectors_load_tool" }),
+  ],
   "group-open": [wednesday, repeated, repeat],
   "error-open": [failed, dana],
   long: [long, mine, dana, between, wednesday, repeated, repeat, after],
@@ -71,7 +75,15 @@ const events: Partial<ProductEvent>[] = [
     payload: {
       messageId: "question",
       role: "user",
-      blocks: [{ kind: "text", text: "When can Dana and I meet this week?" }],
+      blocks: [
+        {
+          kind: "text",
+          text:
+            state === "result-open"
+              ? "What inputs do I need to start a background process?"
+              : "When can Dana and I meet this week?",
+        },
+      ],
     },
   },
   { type: "run.started", payload: { trigger: "user", userId: "reader" } },
@@ -142,7 +154,10 @@ if (state === "two-bot") {
           },
           {
             kind: "text",
-            text: "Tuesday at 2:30 PM Central works for both of you. The afternoon is open from 1:00 to 4:30. If that doesn't suit, Wednesday could work if Dana moves her focus block. Want me to send the invite?",
+            text:
+              state === "result-open"
+                ? "Choose an agent and provide a command. You can also set a working directory and environment variables."
+                : "Tuesday at 2:30 PM Central works for both of you. The afternoon is open from 1:00 to 4:30. If that doesn't suit, Wednesday could work if Dana moves her focus block. Want me to send the invite?",
           },
         ],
       },
