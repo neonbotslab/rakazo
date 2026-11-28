@@ -5,6 +5,7 @@ const SETTINGS_SECTIONS = [
   "space",
   "models",
   "memory",
+  "bot-rules",
   "voice",
   "confirmations",
   "vault",

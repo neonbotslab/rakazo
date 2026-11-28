@@ -11,7 +11,7 @@ import {
 } from "@rakazo/ui-web";
 import { useQuery } from "@tanstack/react-query";
 import { ChevronLeft, ChevronRight, XIcon } from "lucide-react";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { PlanUsage } from "../../components/billing/PlanUsage";
 import {
   CloudComputerSizes,
@@ -42,6 +42,8 @@ import {
   UpdatesSettingsPanel,
 } from "./AccountSettingsOverlay";
 import { BillingSettingsPanel } from "./BillingSettingsPanel";
+import type { BotRulesNavigation } from "./BotRulesSettingsPanel";
+import { BotRulesSettingsPanel } from "./BotRulesSettingsPanel";
 import { LabsSettingsPanel } from "./LabsSettingsPanel";
 import { MemorySettingsOverlay } from "./MemorySettingsOverlay";
 import { MessagingSettingsPanel } from "./MessagingSettingsPanel";
@@ -132,6 +134,10 @@ export function SettingsOverlay({
 }) {
   const { t, i18n } = useLingui();
   const panelRef = useRef<HTMLDivElement>(null);
+  const botRulesTitle = useRef<HTMLHeadingElement>(null);
+  const botRulesNavigation = useRef<BotRulesNavigation>(null);
+  const beforeBotRules = useRef<SettingsSection>("general");
+  const [rulesViewport, setRulesViewport] = useState<{ height: number; top: number }>();
   // State, not a ref: the overflow watcher must follow the nav when it remounts.
   const [nav, setNav] = useState<HTMLElement | null>(null);
   const [navOverflow, setNavOverflow] = useState({ previous: false, next: false });
@@ -174,6 +180,25 @@ export function SettingsOverlay({
     (requestedSection === "plugins" && !showPlugins)
       ? "general"
       : requestedSection;
+  const botRules = section === "bot-rules";
+  const rulesVisualViewport = botRules ? window.visualViewport : null;
+
+  function fitRulesToViewport() {
+    if (rulesVisualViewport && phoneSettings()) {
+      setRulesViewport({ height: rulesVisualViewport.height, top: rulesVisualViewport.offsetTop });
+    } else {
+      setRulesViewport(undefined);
+    }
+  }
+
+  useLayoutEffect(() => {
+    fitRulesToViewport();
+    if (botRules) botRulesTitle.current?.focus();
+  }, [botRules]);
+  useEventListener(rulesVisualViewport, "resize", fitRulesToViewport);
+  useEventListener(rulesVisualViewport, "scroll", fitRulesToViewport);
+  useEventListener(botRules ? window : null, "resize", fitRulesToViewport);
+
   const panelBusy = memoryBusy || voiceBusy;
   // Only a space's own page binds to it; every other section, memory included, acts on the
   // space the app is showing.
@@ -269,11 +294,21 @@ export function SettingsOverlay({
     await onVoiceStatusMaybeChanged?.();
   }
 
-  // Leaving is immediate, so the URL updates in the same tick; voice readiness refreshes behind it.
   function leaveSettings(next: () => void) {
     if (panelBusy) return;
-    void refreshVoiceStatus();
-    next();
+    const leave = () => {
+      void refreshVoiceStatus();
+      next();
+    };
+    if (botRulesNavigation.current) botRulesNavigation.current.leave(leave);
+    else leave();
+  }
+
+  function requestSection(next: SettingsSection) {
+    if (panelBusy || next === section) return;
+    if (next === "bot-rules") beforeBotRules.current = section;
+    if (botRulesNavigation.current) botRulesNavigation.current.leave(() => onSectionChange(next));
+    else onSectionChange(next);
   }
 
   function requestClose() {
@@ -285,7 +320,20 @@ export function SettingsOverlay({
       open
       onOpenChange={(open, details) => {
         if (open) return;
-        if (panelBusy) {
+        if (botRules && details.reason === "escape-key") {
+          details.cancel();
+          if (botRulesNavigation.current?.closeHistory()) return;
+          if (phoneSettings()) requestSection(beforeBotRules.current);
+          else requestClose();
+          return;
+        }
+        const target = details.event?.target;
+        if (
+          panelBusy ||
+          (details.reason === "escape-key" &&
+            target instanceof Element &&
+            target.closest('[data-slot="popover-content"]'))
+        ) {
           details.cancel();
           return;
         }
@@ -298,12 +346,20 @@ export function SettingsOverlay({
         data-settings-section={section}
         showCloseButton={false}
         initialFocus={() =>
-          section === "usage" ? (usageRef.current ?? panelRef.current) : panelRef.current
+          botRulesTitle.current ??
+          (section === "usage" ? (usageRef.current ?? panelRef.current) : panelRef.current)
         }
-        className="flex h-[min(760px,calc(100%-2rem))] max-h-[calc(100%-2rem)] w-[min(1080px,calc(100%-2rem))] flex-col gap-0 overflow-hidden rounded-2xl p-0 sm:max-h-[calc(100%-5rem)] sm:max-w-[1080px]"
+        style={
+          botRules && rulesViewport
+            ? { ...rulesViewport, maxHeight: rulesViewport.height }
+            : undefined
+        }
+        className={`flex h-[min(760px,calc(100%-2rem))] max-h-[calc(100%-2rem)] w-[min(1080px,calc(100%-2rem))] flex-col gap-0 overflow-hidden rounded-2xl p-0 sm:max-h-[calc(100%-5rem)] sm:max-w-[1080px] ${botRules ? "max-md:inset-x-0 max-md:top-0 max-md:h-dvh max-md:max-h-none max-md:w-full max-md:max-w-none max-md:translate-x-0 max-md:translate-y-0 max-md:rounded-none" : ""}`}
       >
         <div className="flex min-h-0 flex-1 flex-col md:flex-row">
-          <div className="flex shrink-0 items-center gap-1 border-b border-border px-3 md:contents">
+          <div
+            className={`flex shrink-0 items-center gap-1 border-b border-border px-3 md:contents ${botRules ? "max-md:hidden" : ""}`}
+          >
             {/* Reserve arrow space so showing controls does not change the overflow measurement. */}
             <Button
               variant="ghost"
@@ -332,7 +388,7 @@ export function SettingsOverlay({
                     data-testid={`settings-nav-${item.id}`}
                     aria-current={active ? "page" : undefined}
                     disabled={panelBusy}
-                    onClick={() => onSectionChange(item.id)}
+                    onClick={() => requestSection(item.id)}
                     className={`flex shrink-0 items-center gap-2.5 rounded-lg px-2.5 py-2 text-start text-body transition-colors disabled:pointer-events-none disabled:opacity-50 ${
                       active
                         ? "bg-accent text-accent-foreground"
@@ -362,7 +418,30 @@ export function SettingsOverlay({
               data-testid="settings-header"
               className="flex shrink-0 items-start justify-between gap-4 border-b border-border px-6 pb-5 pt-6 sm:px-8 sm:pt-7"
             >
+              <div className="order-last flex shrink-0 items-center gap-1">
+                {section === "organization" && organizationPage === "main" ? (
+                  <OrganizationOptionsMenu onActivityLog={() => setOrganizationPage("log")} />
+                ) : null}
+                <DialogClose
+                  aria-label={closeLabel}
+                  disabled={panelBusy}
+                  render={<Button variant="ghost" size={botRules ? "icon-xl" : "icon-sm"} />}
+                >
+                  <XIcon />
+                </DialogClose>
+              </div>
               <div className="flex min-w-0 items-center gap-2">
+                {botRules ? (
+                  <Button
+                    variant="ghost"
+                    size="icon-xl"
+                    className="-ms-3 shrink-0 md:hidden"
+                    aria-label={t`Back`}
+                    onClick={() => requestSection(beforeBotRules.current)}
+                  >
+                    <ChevronLeft className="rtl:rotate-180" />
+                  </Button>
+                ) : null}
                 {section === "space" ? (
                   <Button
                     variant="ghost"
@@ -376,7 +455,11 @@ export function SettingsOverlay({
                   </Button>
                 ) : null}
                 <div className="min-w-0">
-                  <DialogTitle className="break-words text-heading2 font-medium text-foreground">
+                  <DialogTitle
+                    ref={botRules ? botRulesTitle : undefined}
+                    tabIndex={botRules ? -1 : undefined}
+                    className="break-words text-heading2 font-medium text-foreground outline-none"
+                  >
                     {sectionTitle}
                   </DialogTitle>
                   {sectionDescription ? (
@@ -386,34 +469,24 @@ export function SettingsOverlay({
                   ) : null}
                 </div>
               </div>
-              <div className="flex shrink-0 items-center gap-1">
-                {section === "organization" && organizationPage === "main" ? (
-                  <OrganizationOptionsMenu onActivityLog={() => setOrganizationPage("log")} />
-                ) : null}
-                <DialogClose
-                  aria-label={closeLabel}
-                  disabled={panelBusy}
-                  render={<Button variant="ghost" size="icon-sm" />}
-                >
-                  <XIcon />
-                </DialogClose>
-              </div>
             </div>
 
-            <SpaceRpcProvider spaceId={spaceId}>
+            <SpaceRpcProvider spaceId={botRules ? null : spaceId}>
               <div
                 key={spaceId ?? "selected"}
                 data-testid="settings-scroll"
                 className={`min-h-0 flex-1 ${
                   section === "memory"
                     ? "flex flex-col overflow-hidden"
-                    : "rk-scroll overflow-y-auto overscroll-contain px-6 pb-6 pt-6 sm:px-8 sm:pb-8"
+                    : botRules
+                      ? "rk-scroll overflow-y-auto overscroll-contain px-6 pt-6 md:px-8 md:pb-8"
+                      : "rk-scroll overflow-y-auto overscroll-contain px-6 pb-6 pt-6 sm:px-8 sm:pb-8"
                 }`}
               >
                 {/* Memory scrolls its own body and applies the same width there; Usage's table needs the room. */}
                 <div
                   className={
-                    section === "memory" || section === "usage"
+                    section === "memory" || section === "usage" || botRules
                       ? "contents"
                       : SETTINGS_CONTENT_WIDTH
                   }
@@ -515,6 +588,7 @@ export function SettingsOverlay({
                       onBusyChange={setMemoryBusy}
                     />
                   ) : null}
+                  {botRules ? <BotRulesSettingsPanel navigation={botRulesNavigation} /> : null}
                   {section === "voice" ? (
                     <VoiceSettingsOverlay
                       embedded
@@ -531,4 +605,8 @@ export function SettingsOverlay({
       </DialogContent>
     </Dialog>
   );
+}
+
+function phoneSettings(): boolean {
+  return window.matchMedia("(width < 768px)").matches;
 }

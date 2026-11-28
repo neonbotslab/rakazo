@@ -336,7 +336,13 @@ async function deliverToConnectedAgent(
 
   const target = await deps.prisma.bot.findUnique({
     where: { id: targetIdentity.botId },
-    select: { id: true, name: true, archivedAt: true, thread: { select: { id: true } } },
+    select: {
+      id: true,
+      name: true,
+      userId: true,
+      archivedAt: true,
+      thread: { select: { id: true } },
+    },
   });
   if (!target || target.archivedAt || !target.thread) {
     return { ok: false, error: "that agent is not available" };
@@ -362,7 +368,13 @@ async function deliverToConnectedAgent(
         return { ok: false as const, error: "no agent can be reached at that address" };
       }
       const senderStillRunning = await tx.run.findFirst({
-        where: { id: run.id, status: "running" },
+        where: {
+          id: run.id,
+          status: "running",
+          spaceId: run.spaceId,
+          botId: sender.id,
+          userId: run.userId,
+        },
         select: { id: true },
       });
       if (!senderStillRunning)
@@ -383,6 +395,11 @@ async function deliverToConnectedAgent(
         fromBotName: sender.name,
         text: message,
         hop,
+        ...(run.userId === senderIdentity.userId &&
+        run.userId === targetIdentity.userId &&
+        run.userId === target.userId
+          ? { senderRunId: run.id }
+          : {}),
       };
       const outboundBlock: MessageBlock = {
         kind: "bot_message_sent",

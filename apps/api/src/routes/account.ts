@@ -41,6 +41,7 @@ import {
   isRecordNotFound,
   listApprovalRules,
   listAuditEvents,
+  listOwnerRulesVersions,
   listVoicePreferences,
   lockSpaceSettings,
   newestVoiceCredentialOrder,
@@ -48,10 +49,12 @@ import {
   pageChangesScope,
   readEffectiveApprovalRules,
   removeApprovalRule,
+  restoreOwnerRules,
   runAsSystem,
   runAsTenant,
   saveApprovalRule,
   saveAutoReviewPreference,
+  saveOwnerRules,
   selectVoicePreference,
   voicePreferenceTarget,
   withTransactionRetry,
@@ -98,6 +101,10 @@ export function accountRoutes(ctx: RouterContext) {
   const hostPlugins = createHostPluginSettings(deps.prisma);
   const preferencesChanged = (userId: string) =>
     deps.events.publishSpaceChange?.(accountPreferencesChangesScope(userId), "preferences");
+  const sessionOwnerRules = authed.use(({ context, next }) => {
+    if (!context.sessionId) throw new ORPCError("UNAUTHORIZED");
+    return next();
+  }).ownerRules;
 
   return {
     aiConsent: {
@@ -152,6 +159,23 @@ export function accountRoutes(ctx: RouterContext) {
         const saved = await hostPlugins.setEnabled(userId, input);
         await preferencesChanged(userId);
         return saved;
+      }),
+    },
+    ownerRules: {
+      list: sessionOwnerRules.list.handler(({ context, input }) =>
+        listOwnerRulesVersions(deps.prisma, context.actor.userId, input.before),
+      ),
+      save: sessionOwnerRules.save.handler(async ({ context, input }) => {
+        const { userId } = context.actor;
+        const version = await saveOwnerRules(deps.prisma, userId, input);
+        await preferencesChanged(userId);
+        return version;
+      }),
+      restore: sessionOwnerRules.restore.handler(async ({ context, input }) => {
+        const { userId } = context.actor;
+        const version = await restoreOwnerRules(deps.prisma, userId, input);
+        await preferencesChanged(userId);
+        return version;
       }),
     },
     cloudComputers: {

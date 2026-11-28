@@ -144,6 +144,8 @@ export function useSave<Input = void, Saved = unknown>(options: {
   onFailed?: (error: Error, input: Input) => unknown;
   /** `onSaved` leaves the screen, so a success stays pending instead of offering the controls again. */
   closesScreen?: boolean;
+  /** Keep the failure visible until the retry succeeds. */
+  keepErrorWhilePending?: boolean;
 }) {
   const queryClient = useQueryClient();
   const userId = useQueryUserId();
@@ -173,7 +175,14 @@ export function useSave<Input = void, Saved = unknown>(options: {
       const { spaceId, key } = scopeNow();
       if (inFlight.current.has(key)) return;
       inFlight.current.add(key);
-      setSaves((now) => ({ ...now, [key]: { input, pending: true, error: null } }));
+      setSaves((now) => ({
+        ...now,
+        [key]: {
+          input,
+          pending: true,
+          error: options.keepErrorWhilePending ? (now[key]?.error ?? null) : null,
+        },
+      }));
       const { save, stale = [], onSaved, onFailed, closesScreen } = options;
       const shown = () => mounted.current && shownScope.current().key === key;
       const finish = (error: Error | null) => {

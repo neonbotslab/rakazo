@@ -291,6 +291,7 @@ export interface RunComputerContext {
 
 export interface RunSource {
   ownerStartedRun: boolean;
+  ownerRules: string;
   meetingChat: boolean;
   messagingChannelRun: boolean;
   channelId: string | undefined;

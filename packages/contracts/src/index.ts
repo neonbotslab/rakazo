@@ -5,6 +5,7 @@ export * from "./account/audit-events.js";
 export * from "./account/auth.js";
 export * from "./account/host-plugins.js";
 export * from "./account/me.js";
+export * from "./account/owner-rules.js";
 export * from "./account/preferences.js";
 export * from "./account/security-events.js";
 export * from "./account/signup-attribution.js";

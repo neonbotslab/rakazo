@@ -127,6 +127,7 @@ model User {
   devices                     UserDevice[]
   hostPlugins                 UserHostPlugin[]
   hostPluginTaskSnapshots     HostPluginTaskSnapshot[]
+  ownerRulesVersions          OwnerRulesVersion[]
 
   @@unique([email])
   @@map("user")
@@ -3001,6 +3002,26 @@ model UserActionApprovalRule {
 
   @@unique([userId, effect, matchKind, matchValue])
   @@map("user_action_approval_rules")
+}
+
+enum OwnerRulesVersionReason {
+  saved
+  restored
+}
+
+model OwnerRulesVersion {
+  id        Int                     @id @default(autoincrement())
+  userId    String
+  user      User                    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  text      String
+  createdAt DateTime                @default(now())
+  sessionId String?                 @db.Uuid
+  revision  Int                     @default(1)
+  reason    OwnerRulesVersionReason @default(saved)
+
+  @@unique([userId, sessionId])
+  @@index([userId, id(sort: Desc)])
+  @@map("owner_rules_versions")
 }
 
 model UserHostPlugin {

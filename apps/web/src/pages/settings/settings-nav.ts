@@ -9,6 +9,7 @@ import {
   Gauge,
   KeyRound,
   Layers,
+  ListChecks,
   MessageCircle,
   Monitor,
   Puzzle,
@@ -71,6 +72,12 @@ export function useSettingsNavItems(available: {
       label: t`Memory`,
       icon: Brain,
       description: t`What your bots remember between chats.`,
+    },
+    {
+      id: "bot-rules",
+      label: t`Bot rules`,
+      icon: ListChecks,
+      description: t`Rules every bot follows when it works for you.`,
     },
     {
       id: "voice",

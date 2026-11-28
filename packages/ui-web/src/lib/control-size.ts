@@ -16,6 +16,7 @@ export const controlSquare = {
   sm: "size-7",
   default: "size-8",
   lg: "size-9",
+  xl: "size-12",
 } as const;
 
 export type ControlSize = keyof typeof controlHeight;

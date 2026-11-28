@@ -16,6 +16,13 @@ import {
 } from "./host-plugins.js";
 import { AppBootstrapSchema, MeSchema, SignupSurveySchema } from "./me.js";
 import {
+  OwnerRulesPageSchema,
+  OwnerRulesRestoreInputSchema,
+  OwnerRulesSaveInputSchema,
+  OwnerRulesVersionIdSchema,
+  OwnerRulesVersionSchema,
+} from "./owner-rules.js";
+import {
   AppLocaleSchema,
   AvatarStyleSchema,
   ChatPreferencesPatchSchema,
@@ -55,6 +62,13 @@ export const accountRpc = {
     setEnabled: oc
       .input(z.object({ id: HostPluginIdSchema, enabled: z.boolean() }))
       .output(HostPluginPreferenceSchema),
+  },
+  ownerRules: {
+    list: oc
+      .input(z.object({ before: OwnerRulesVersionIdSchema.optional() }))
+      .output(OwnerRulesPageSchema),
+    save: oc.input(OwnerRulesSaveInputSchema).output(OwnerRulesVersionSchema),
+    restore: oc.input(OwnerRulesRestoreInputSchema).output(OwnerRulesVersionSchema),
   },
   preferences: {
     update: oc

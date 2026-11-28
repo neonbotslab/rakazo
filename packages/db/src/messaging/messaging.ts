@@ -329,22 +329,25 @@ function teamChatBatchMessageIds(batchContext: string | null): string[] | null {
   }
 }
 
-/**
- * Whether every person a team-chat run answers is the bot's owner: the person who installed
- * the workspace, or a sender the owner linked to their own account. Other people, other apps
- * and bots, and anything that cannot be traced to its messages are not.
- */
-export async function teamChatRunFromOwner(
+type TeamChatRunSource = {
+  externalConversationId: string;
+  sourceClientNonce: string | null | undefined;
+};
+
+export type TeamChatRunAudience = "owner-direct" | "owner-shared" | "other";
+
+/** An owner may be the workspace installer or a sender linked to their own account. */
+export async function teamChatRunAudience(
   prisma: PrismaClient,
-  input: { externalConversationId: string; sourceClientNonce: string | null | undefined },
-): Promise<boolean> {
+  input: TeamChatRunSource,
+): Promise<TeamChatRunAudience> {
   const conversation = await prisma.externalConversation.findUnique({
     where: { id: input.externalConversationId },
     select: { provider: true, workspaceId: true, userId: true, botId: true },
   });
-  if (!conversation) return false;
+  if (!conversation) return "other";
   const prefix = teamChatRunClientNonce(conversation.provider, "");
-  if (!input.sourceClientNonce?.startsWith(prefix)) return false;
+  if (!input.sourceClientNonce?.startsWith(prefix)) return "other";
   const waking = await prisma.externalMessage.findUnique({
     where: {
       externalConversationId_providerEventId: {
@@ -352,20 +355,20 @@ export async function teamChatRunFromOwner(
         providerEventId: input.sourceClientNonce.slice(prefix.length),
       },
     },
-    select: { id: true, senderId: true, senderIsBot: true, batchContext: true },
+    select: { id: true, senderId: true, senderIsBot: true, batchContext: true, kind: true },
   });
-  if (!waking) return false;
+  if (!waking) return "other";
   const batchIds = teamChatBatchMessageIds(waking.batchContext)?.filter((id) => id !== waking.id);
-  if (!batchIds) return false;
+  if (!batchIds) return "other";
   const batch = batchIds.length
     ? await prisma.externalMessage.findMany({
         where: { id: { in: batchIds }, externalConversationId: input.externalConversationId },
-        select: { senderId: true, senderIsBot: true },
+        select: { senderId: true, senderIsBot: true, kind: true },
       })
     : [];
-  if (batch.length !== batchIds.length) return false;
+  if (batch.length !== batchIds.length) return "other";
   const senders = [waking, ...batch];
-  if (senders.some((sender) => sender.senderIsBot)) return false;
+  if (senders.some((sender) => sender.senderIsBot)) return "other";
   const addresses = [...new Set(senders.map((sender) => sender.senderId))];
   const [installation, identities] = await Promise.all([
     prisma.messagingInstallation.findUnique({
@@ -393,5 +396,6 @@ export async function teamChatRunFromOwner(
     installation.botId === conversation.botId
   )
     owner.add(installation.ownerAddress);
-  return addresses.every((address) => owner.has(address));
+  if (!addresses.every((address) => owner.has(address))) return "other";
+  return senders.every((sender) => sender.kind === "direct") ? "owner-direct" : "owner-shared";
 }

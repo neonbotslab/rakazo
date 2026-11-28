@@ -1,5 +1,6 @@
 import type { AgentRunRequest } from "@rakazo/adapter-kit";
 import type { MessageBlock } from "@rakazo/contracts";
+import { renderOwnerRules } from "@rakazo/core";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type * as ComputerLifecycleModule from "../../computers/computer-lifecycle.js";
 import { createRunExecutor } from "./executor.js";
@@ -17,6 +18,7 @@ vi.mock("../../computers/computer-lifecycle.js", async (importOriginal) => ({
 }));
 
 type Space = { members: number; authors: boolean } | "legacy";
+const OWNER_RULES = "Use metric units by default.";
 
 function historyMessages(authors: boolean) {
   const message = (
@@ -58,6 +60,10 @@ function historyMessages(authors: boolean) {
 
 type RunOptions = {
   trigger?: string;
+  sourceNonce?: string;
+  rules?: { ownerId: string; text: string };
+  handoff?: "direct" | "channel" | "connected" | "connected-owner" | "connected-owner-channel";
+  group?: boolean;
   taskPrompt?: string;
   taughtSkills?: Array<Record<string, unknown>>;
   /** The bot is linked to its creator's chat app and may talk to other people's agents. */
@@ -66,6 +72,8 @@ type RunOptions = {
 
 async function runInSpace(space: Space, options: RunOptions = {}) {
   const trigger = options.trigger ?? "user";
+  const isScheduled = trigger === "routine";
+  const hasSource = ["user", "messaging", "webhook", "bot_message"].includes(trigger);
   const run = {
     id: "run-4",
     botId: "bot-1",
@@ -75,8 +83,33 @@ async function runInSpace(space: Space, options: RunOptions = {}) {
     userId: "user-b",
     status: "queued",
     trigger,
-    sourceMessageId: trigger === "user" ? "current" : null,
+    clientNonce: options.sourceNonce ? "send:current" : null,
+    sourceMessageId: hasSource ? "current" : null,
+    routineId: isScheduled ? "routine-1" : null,
+    routine: isScheduled ? { inChat: false } : null,
     leaseFence: 0,
+  };
+  const source = {
+    id: "current",
+    role: "user",
+    threadId: run.threadId,
+    clientNonce: options.sourceNonce,
+    authorUserId: trigger === "webhook" ? null : run.userId,
+    blocks: options.handoff
+      ? [
+          {
+            kind: "bot_message_received",
+            fromBotId: "sender-bot",
+            text: "Take this task.",
+            ...(options.handoff === "connected-owner" ||
+            options.handoff === "connected-owner-channel"
+              ? { senderRunId: "sender-run" }
+              : options.handoff !== "connected"
+                ? { returnToMessageId: "outbound" }
+                : {}),
+          },
+        ]
+      : [{ kind: "text", text: "Book the table" }],
   };
   let request: AgentRunRequest | undefined;
   const runtimeRun = vi.fn(async function* (next: AgentRunRequest) {
@@ -91,7 +124,14 @@ async function runInSpace(space: Space, options: RunOptions = {}) {
     $transaction: vi.fn(async (fn: (tx: unknown) => unknown) => fn(prisma)),
     $queryRaw: vi.fn(async () => []),
     space: { findUnique: vi.fn(async () => null) },
-    user: { findUnique: vi.fn(async () => null), findMany: users },
+    user: {
+      findUnique: vi.fn(async ({ where }: { where: { id?: string } }) =>
+        where.id === options.rules?.ownerId
+          ? { ownerRulesVersions: [{ text: options.rules?.text }] }
+          : null,
+      ),
+      findMany: users,
+    },
     spaceMember: {
       findUnique: vi.fn(async () => ({ id: "member-1" })),
       findMany: vi.fn(async () => [
@@ -102,7 +142,39 @@ async function runInSpace(space: Space, options: RunOptions = {}) {
     run: {
       findUnique: vi.fn(async () => run),
       findUniqueOrThrow: vi.fn(async () => run),
-      findFirst: vi.fn(async () => ({ bot: { notifyOnFinish: true }, thread: { groupId: null } })),
+      findFirst: vi.fn(
+        async ({
+          where,
+        }: {
+          where: {
+            id?: string;
+            spaceId?: string;
+            botId?: string;
+            userId?: string;
+            bot?: { userId?: string };
+          };
+        }) => {
+          if (where.id !== "sender-run")
+            return { bot: { notifyOnFinish: true }, thread: { groupId: null } };
+          const connected = options.handoff?.startsWith("connected-owner");
+          const channel = options.handoff?.endsWith("channel");
+          return where.botId === "sender-bot" &&
+            where.userId === run.userId &&
+            where.bot?.userId === run.userId &&
+            (!connected || where.spaceId === undefined)
+            ? {
+                id: "sender-run",
+                userId: run.userId,
+                trigger: channel ? "messaging" : "user",
+                thread: { groupId: null, externalConversationId: null },
+                sourceMessage: {
+                  id: "sender-source",
+                  blocks: channel ? [{ kind: "channel_message" }] : [],
+                },
+              }
+            : null;
+        },
+      ),
       updateMany: vi.fn(async ({ data }: { data: Record<string, unknown> }) => {
         Object.assign(run, data);
         return { count: 1 };
@@ -121,6 +193,7 @@ async function runInSpace(space: Space, options: RunOptions = {}) {
         computerSwitching: false,
         memoryScope: null,
         computer: { id: "computer-1", scope: "dedicated" },
+        ...(options.rules ? { userId: options.rules.ownerId } : {}),
         ...(options.chatLinkedBotOf
           ? { userId: options.chatLinkedBotOf, crossSpaceCommunication: true }
           : {}),
@@ -136,7 +209,7 @@ async function runInSpace(space: Space, options: RunOptions = {}) {
     thread: {
       findUniqueOrThrow: vi.fn(async () => ({
         id: run.threadId,
-        groupId: null,
+        groupId: options.group ? "group-1" : null,
         historyCompactionSummary: null,
         historyCompactedUpToSeq: null,
         nextMessageSeq: 5,
@@ -147,7 +220,10 @@ async function runInSpace(space: Space, options: RunOptions = {}) {
       findMany: vi.fn(async (args: { where?: { threadId?: string } }) =>
         args.where?.threadId ? historyMessages(space !== "legacy" && space.authors) : [],
       ),
-      findUnique: vi.fn(async () => null),
+      findUnique: vi.fn(async ({ where }: { where: { id?: string } }) => {
+        if (where.id === "outbound") return { runId: "sender-run", threadId: "sender-thread" };
+        return where.id === source.id ? source : null;
+      }),
       findFirst: vi.fn(async () => null),
     },
     task: {
@@ -169,7 +245,8 @@ async function runInSpace(space: Space, options: RunOptions = {}) {
         defaultModelId: "openai/gpt-4o",
       })),
     },
-    chatGroup: { findMany: vi.fn(async () => []) },
+    chatGroup: { findMany: vi.fn(async () => []), findUnique: vi.fn(async () => null) },
+    routine: { findUnique: vi.fn(async () => null), count: vi.fn(async () => 0) },
     taughtSkill: { findMany: vi.fn(async () => options.taughtSkills ?? []) },
     agentSkill: { findMany: vi.fn(async (_args: unknown) => []) },
     scratchpadItem: { findMany: vi.fn(async () => []), count: vi.fn(async () => 0) },
@@ -320,5 +397,46 @@ describe("agent connections in a shared space", () => {
 
     expect(offered(own.request)).toBe(true);
     expect(offered(other.request)).toBe(false);
+  });
+});
+
+describe("owner rules in run prompts", () => {
+  const personal = { members: 1, authors: true };
+  const rules = { ownerId: "user-b", text: OWNER_RULES };
+
+  it.each<[string, RunOptions]>([
+    ["app chat", { trigger: "user" }],
+    ["routine", { trigger: "routine" }],
+    ["webhook", { trigger: "webhook", sourceNonce: "webhook:delivery" }],
+    ["webhook without an idempotency key", { trigger: "webhook" }],
+    ["bot handoff", { trigger: "bot_message", handoff: "direct" }],
+    ["same-owner connected handoff", { trigger: "bot_message", handoff: "connected-owner" }],
+    ["voice call", { trigger: "user", sourceNonce: "call:fixture:message" }],
+    ["voice hang-up", { trigger: "call_end" }],
+    ["connected direct chat", { trigger: "messaging", sourceNonce: "messaging:direct" }],
+  ])("includes the owner's rules in a %s", async (_label, options) => {
+    const { request } = await runInSpace(personal, { ...options, rules });
+
+    expect(request.instructions).toContain(renderOwnerRules(OWNER_RULES));
+    if (options.sourceNonce?.startsWith("call:")) {
+      expect(request.prompt).toContain("You are on a live voice call.");
+    }
+  });
+
+  it.each<[string, RunOptions]>([
+    ["another Space member", { rules: { ...rules, ownerId: "user-a" } }],
+    ["a group conversation", { group: true }],
+    ["another person's connected agent", { trigger: "bot_message", handoff: "connected" }],
+    ["a handoff from a channel conversation", { trigger: "bot_message", handoff: "channel" }],
+    [
+      "a connected handoff from a channel",
+      { trigger: "bot_message", handoff: "connected-owner-channel" },
+    ],
+    ["a messaging routine wake", { trigger: "webhook", sourceNonce: "messaging:delivery" }],
+  ])("omits the rules when answering %s", async (_label, options) => {
+    const { request } = await runInSpace({ members: 2, authors: true }, { rules, ...options });
+
+    expect(request.instructions).not.toContain("<owner_rules>");
+    expect(request.prompt).not.toContain(OWNER_RULES);
   });
 });
