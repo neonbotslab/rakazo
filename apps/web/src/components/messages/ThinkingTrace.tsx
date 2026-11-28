@@ -8,6 +8,7 @@ import { useId, useState } from "react";
 import type { ArtifactTarget } from "../../lib/pages/artifact-open";
 import { useSpaceQueries } from "../../lib/query/query";
 import { Shimmer } from "../ai/primitives";
+import { ToolResult } from "./ToolResult";
 import type { TraceCall, TraceEntry } from "./thinking-trace-model";
 import {
   callDuration,
@@ -17,6 +18,7 @@ import {
   readableName,
   traceRows,
 } from "./thinking-trace-model";
+import { retainedToolResult } from "./tool-result-model";
 import "./thinking-trace.css";
 
 type DetailSource = {
@@ -255,7 +257,7 @@ function ToolRow({ calls, source }: { calls: TraceCall[]; source?: DetailSource 
     ? undefined
     : calls.reduce((total, call) => total + (call.durationMs ?? 0), 0);
   return (
-    <li className="trace-node pb-2 last:pb-0">
+    <li className="trace-node trace-tool-node pb-2 last:pb-0">
       <button
         type="button"
         className={cn(triggerClass, "trace-tool-trigger pe-2")}
@@ -267,7 +269,7 @@ function ToolRow({ calls, source }: { calls: TraceCall[]; source?: DetailSource 
         <span
           dir="auto"
           className={cn(
-            "min-w-0 wrap-anywhere",
+            "min-w-0 truncate",
             outcome === "running" && "text-foreground",
             outcome === "failed" && "text-destructive",
           )}
@@ -360,8 +362,6 @@ function Subcall({
   );
 }
 
-const photoMarker = "[image not kept]";
-
 function CallDetails({
   call,
   detail,
@@ -376,9 +376,7 @@ function CallDetails({
   const { i18n, t } = useLingui();
   const outcome = detail?.failed ? "failed" : call.outcome;
   const duration = call.durationMs === undefined ? undefined : callDuration(call.durationMs);
-  const image = Boolean(detail?.hasScreenshot || detail?.result?.includes(photoMarker));
-  const result =
-    outcome === "failed" ? detail?.result : detail?.result?.split(photoMarker).join("").trim();
+  const { text: result, image } = retainedToolResult(detail?.result, detail?.hasScreenshot);
   const args = detail?.arguments ? detailFields(detail.arguments) : [];
   const empty = pending
     ? t`Loading details…`
@@ -415,17 +413,16 @@ function CallDetails({
               </p>
             ) : null}
           </>
-        ) : outcome === "running" && !result ? (
+        ) : outcome === "running" && !result && !image ? (
           <p className="text-muted-foreground">{t`Waiting for the result…`}</p>
+        ) : result ? (
+          <ToolResult text={result} />
         ) : (
-          <>
-            {result ? <DetailFields rows={detailFields(result)} /> : null}
-            {image ? (
-              <p>{detail?.hasScreenshot ? t`Took a screenshot (not shown)` : t`Image not shown`}</p>
-            ) : null}
-            {!result && !image ? <p className="text-muted-foreground">{empty}</p> : null}
-          </>
+          !image && <p className="text-muted-foreground">{empty}</p>
         )}
+        {image ? (
+          <p>{image === "screenshot" ? t`Took a screenshot (not shown)` : t`Image not shown`}</p>
+        ) : null}
       </section>
       {duration || outcome ? (
         <footer className="flex flex-wrap items-center gap-x-3 gap-y-1 border-border border-t pt-2 text-label text-muted-foreground">

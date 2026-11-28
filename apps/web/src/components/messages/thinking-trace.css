@@ -1,8 +1,14 @@
 .thinking-trace {
   --trace-width: 33rem;
   --trace-icon: calc(var(--spacing) * 3.5);
-  --trace-touch: calc(var(--spacing) * 12);
-  --trace-node-center: calc(var(--trace-touch) / 2);
+  --touch: calc(var(--spacing) * 12);
+  --space-3: calc(var(--spacing) * 3);
+  --space-8: calc(var(--spacing) * 8);
+  --tool-row: var(--touch);
+  --tool-center: calc(var(--tool-row) / 2);
+  --result-lines: 3;
+  --result-control-size: var(--touch);
+  --section-border: var(--border);
   --trace-rail-width: thin;
   --trace-rail-offset: calc(var(--trace-icon) / -2);
   --trace-label-offset: calc(var(--trace-icon) + var(--spacing) * 2);
@@ -14,7 +20,7 @@
 }
 
 .trace-trigger {
-  min-block-size: var(--trace-touch);
+  min-block-size: var(--touch);
   transition: background-color var(--trace-duration) ease-out;
 }
 
@@ -61,6 +67,14 @@
   --trace-node-center: calc(var(--spacing) * 2.5);
 }
 
+.trace-tool-node {
+  --trace-node-center: var(--tool-center);
+}
+
+.trace-tool-node:has(+ .trace-tool-node) {
+  padding-block-end: 0;
+}
+
 .trace-marker {
   position: relative;
   display: grid;
@@ -77,6 +91,8 @@
 
 .trace-tool-trigger {
   display: grid;
+  block-size: var(--tool-row);
+  min-block-size: 0;
   grid-template-columns: var(--trace-icon) minmax(0, 1fr) auto var(--trace-icon);
 }
 
@@ -92,6 +108,30 @@
 .trace-field {
   display: grid;
   grid-template-columns: minmax(0, 5.5rem) minmax(0, 1fr);
+}
+
+.trace-result-control {
+  min-block-size: var(--result-control-size);
+  min-inline-size: var(--result-control-size);
+}
+
+.trace-result-children {
+  border-inline-start: var(--trace-rail-width) solid var(--section-border);
+  padding-inline-start: var(--space-3);
+}
+
+.trace-result-clamp {
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: var(--result-lines);
+}
+
+@media (pointer: fine) {
+  .thinking-trace {
+    --tool-row: var(--space-8);
+    --result-control-size: var(--space-8);
+  }
 }
 
 @media (width < 30rem) {
